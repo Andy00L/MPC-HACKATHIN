@@ -41,6 +41,8 @@ export const COLUMN_MAP: Record<keyof Transaction, string> = {
   state: "merchant_state",
   country: "merchant_country",
   isSpend: "is_spend",
+  employeeId: "employee_id",
+  department: "department",
 };
 
 // SQLite storage class per SQL column, keyed by the SQL name so it stays aligned with
@@ -62,6 +64,8 @@ const SQL_TYPES: Record<string, string> = {
   merchant_state: "TEXT",
   merchant_country: "TEXT",
   is_spend: "INTEGER",
+  employee_id: "TEXT",
+  department: "TEXT",
 };
 
 // SQL column names in a stable order (the insertion order of COLUMN_MAP).
@@ -86,6 +90,8 @@ function toRow(txn: Transaction): Record<string, unknown> {
     merchant_state: txn.state,
     merchant_country: txn.country,
     is_spend: txn.isSpend ? 1 : 0,
+    employee_id: txn.employeeId,
+    department: txn.department,
   };
 }
 
