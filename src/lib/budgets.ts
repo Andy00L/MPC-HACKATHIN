@@ -39,8 +39,15 @@ function computeBudgets(): Record<Category, number> {
     tolls: 0,
     telecom: 0,
     digital: 0,
-    gift_card: 0,
     transport: 0,
+    parking: 0,
+    car_rental: 0,
+    lodging: 0,
+    airfare: 0,
+    meal: 0,
+    alcohol: 0,
+    marketplace: 0,
+    gift_card: 0,
     other: 0,
   };
   for (const { category, total } of spendByCategory(allTransactions)) {

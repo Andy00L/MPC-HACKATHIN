@@ -9,6 +9,7 @@
 import type { Transaction, ExpenseReport, Category } from "./contract";
 import { spendOnly } from "./aggregate";
 import { findViolations } from "./compliance";
+import { getRules } from "./rules";
 
 const GAP_DAYS = 3; // a gap larger than this starts a new trip
 
@@ -59,7 +60,7 @@ function buildReport(group: Transaction[], index: number): ExpenseReport {
     transactions: sorted,
     totalsByCategory: totalsByCategory(sorted),
     total,
-    violations: findViolations(sorted), // policy checks on just this group
+    violations: findViolations(sorted, getRules()),
     narration: "",
   };
 }
