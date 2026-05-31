@@ -185,6 +185,8 @@ export interface DialogCaptionProps {
   narrateKey: string;
   muted: boolean;
   onToggleMute: () => void;
+  dialogLeft?: number;    // override left position (default 70)
+  dialogTop?: number;     // when set, use top instead of bottom: 90
 }
 
 /**
@@ -192,10 +194,11 @@ export interface DialogCaptionProps {
  * never the whole book (which would churn the page layers and stall the tour). The mute
  * affordance is now a real toggle wired to the voice controller.
  */
-export function DialogCaption({ line, moving, flip, sev, narrateKey, muted, onToggleMute }: DialogCaptionProps) {
+export function DialogCaption({ line, moving, flip, sev, narrateKey, muted, onToggleMute, dialogLeft = 70, dialogTop }: DialogCaptionProps) {
   const typed = useTypewriter(moving ? "" : line, narrateKey + (moving ? "m" : "a"));
+  const verticalPos = dialogTop !== undefined ? { top: dialogTop } : { bottom: 90 };
   return (
-    <div style={{ position: "absolute", left: 70, bottom: 28, width: 470, zIndex: 26 }}>
+    <div style={{ position: "absolute", left: dialogLeft, ...verticalPos, width: 470, zIndex: 26 }}>
       <div style={{ position: "relative", background: WF.page2, border: `1.5px solid ${WF.sepiaSoft}`, borderRadius: 6, padding: "14px 16px", boxShadow: "0 8px 22px rgba(0,0,0,0.22), inset 0 0 26px rgba(138,111,78,0.16)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 7 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

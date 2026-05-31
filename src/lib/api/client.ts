@@ -132,6 +132,29 @@ export async function getApprovals(): Promise<ApiResult<ApprovalsResponse>> {
   }
 }
 
+export interface OverviewResponse {
+  totalSpend: number;
+  categoryShare: { label: string; value: number }[];
+  trend: { label: string; value: number }[];
+  topVendors: { label: string; value: number }[];
+}
+
+/** GET /api/overview — deterministic spend aggregations (no Gemini needed). */
+export async function getOverview(): Promise<ApiResult<OverviewResponse>> {
+  let res: Response;
+  try {
+    res = await fetch("/api/overview", { method: "GET" });
+  } catch {
+    return { ok: false, error: "Could not reach the ledger." };
+  }
+  if (!res.ok) return { ok: false, error: await readError(res, "Could not load overview.") };
+  try {
+    return { ok: true, data: (await res.json()) as OverviewResponse };
+  } catch {
+    return { ok: false, error: "Overview data was unreadable." };
+  }
+}
+
 /** GET /api/rules — the active RuleSet. */
 export async function fetchRules(): Promise<ApiResult<RulesResponse>> {
   let res: Response;

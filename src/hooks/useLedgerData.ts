@@ -14,7 +14,7 @@
 
 import { useEffect, useState } from "react";
 import type { Violation } from "@/lib/contract";
-import { askData, getViolations } from "@/lib/api/client";
+import { getOverview, getViolations } from "@/lib/api/client";
 import type { ChartSeriesPoint } from "@/components/ledger/charts";
 
 export interface LedgerData {
@@ -49,14 +49,6 @@ const INITIAL: LedgerData = {
   trend: [],
 };
 
-// Turn a category slug ("permits_gov") into a readable label ("Permits Gov"). Generic —
-// no hardcoded category list — so it survives new categories without edits.
-function prettifyLabel(label: string): string {
-  return label
-    .split("_")
-    .map((word) => (word.length === 0 ? word : word[0].toUpperCase() + word.slice(1)))
-    .join(" ");
-}
 
 export function useLedgerData(): LedgerData {
   const [state, setState] = useState<LedgerData>(INITIAL);
@@ -69,13 +61,17 @@ export function useLedgerData(): LedgerData {
     getViolations().then((result) => {
       if (!alive) return;
       if (result.ok) {
+        // OVER_PREAUTH is a compliance receipt-tracking rule, not a suspicious flag.
+        // It fires on ~2,000+ routine fleet charges and must not inflate the headline count.
+        // Filter it here so every consumer of data.violations and data.flagCount agrees.
+        const suspicious = result.data.violations.filter((v) => v.ruleId !== "OVER_PREAUTH");
         setState((prev) => ({
           ...prev,
           loading: false,
           violationsError: null,
-          violations: result.data.violations,
+          violations: suspicious,
           repeatOffenders: result.data.repeatOffenders,
-          flagCount: result.data.count,
+          flagCount: suspicious.length,
           transactionCount: result.data.transactionCount ?? 0,
         }));
       } else {
@@ -85,32 +81,23 @@ export function useLedgerData(): LedgerData {
       }
     });
 
-    // Channel 2 — the headline summary via seed questions, run in parallel.
-    Promise.all([
-      askData("total spend grouped by category", ""),
-      askData("top vendors by total spend", ""),
-      askData("spend over time by month", ""),
-    ]).then(([category, vendors, time]) => {
+    // Channel 2 — spend aggregations from the deterministic overview route.
+    // No Gemini call needed; computed directly from dataset.json on the server.
+    getOverview().then((result) => {
       if (!alive) return;
-      // Each seed independently degrades to an empty series on failure.
-      const categoryShare = category.ok
-        ? category.data.chart.series.map((point) => ({ label: prettifyLabel(point.label), value: point.value }))
-        : [];
-      const topVendors = vendors.ok ? vendors.data.chart.series : [];
-      const trend = time.ok ? time.data.chart.series : [];
-      // Total spend = sum of the category slices (category spend sums to total spend).
-      // Null when the category seed failed, so the UI can show "—" rather than a wrong 0.
-      const totalSpend = category.ok ? categoryShare.reduce((sum, point) => sum + point.value, 0) : null;
-      const anyFailed = !category.ok || !vendors.ok || !time.ok;
-      setState((prev) => ({
-        ...prev,
-        summaryLoading: false,
-        categoryShare,
-        topVendors,
-        trend,
-        totalSpend,
-        summaryError: anyFailed ? "The keeper could not read the summary (is GEMINI_API_KEY set?)." : null,
-      }));
+      if (result.ok) {
+        setState((prev) => ({
+          ...prev,
+          summaryLoading: false,
+          summaryError: null,
+          totalSpend: result.data.totalSpend,
+          categoryShare: result.data.categoryShare,
+          trend: result.data.trend,
+          topVendors: result.data.topVendors,
+        }));
+      } else {
+        setState((prev) => ({ ...prev, summaryLoading: false, summaryError: result.error }));
+      }
     });
 
     return () => {
