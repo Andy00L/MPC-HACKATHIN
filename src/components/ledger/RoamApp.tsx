@@ -383,7 +383,9 @@ export function RoamApp() {
 
                 <Gutter style={{ left: "50%", transform: "translateX(-50%)", zIndex: 22 }} />
                 <Keeper x={pos.x} y={pos.y} face={pos.face} mood={activeMood} pose={activePose} moving={moving} narrating={narrating} narrateKey={narrateKey} lineLen={activeLine ? activeLine.length : 0} />
-                <DialogCaption line={activeLine} moving={moving} flip={flip} sev={sev} narrateKey={narrateKey} muted={voice.muted} onToggleMute={voice.toggleMute} />
+                {/* On ch7, pin the dialog at the very top of the right page (top:38 aligns with the
+                    chapter kicker on the left page). The violations panel starts at 162, well below. */}
+                <DialogCaption line={activeLine} moving={moving} flip={flip} sev={sev} narrateKey={narrateKey} muted={voice.muted} onToggleMute={voice.toggleMute} dialogLeft={ch === 7 ? 662 : 70} dialogTop={ch === 7 ? 38 : undefined} />
               </div>
             </div>
           </div>

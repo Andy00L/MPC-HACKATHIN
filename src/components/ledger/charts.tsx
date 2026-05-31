@@ -44,6 +44,134 @@ function NoData({ height, label = "no data" }: { height: number; label?: string 
   );
 }
 
+// ── helpers used by LabeledTrendChart ──
+function shortDollar(v: number): string {
+  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `$${Math.round(v / 1_000)}k`;
+  return `$${Math.round(v)}`;
+}
+
+function monthLabel(raw: string): string {
+  const m = raw.match(/^\d{4}-(\d{2})$/);
+  if (!m) return raw.length > 6 ? raw.slice(-3) : raw;
+  const names = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return names[parseInt(m[1], 10) - 1] ?? raw;
+}
+
+/**
+ * LabeledTrendChart — the ch1 overview trend with x-axis month labels, y-axis dollar
+ * gridlines, a fill under the curve, and peak/trough callouts. Replaces the bare
+ * TrendChart on the opening spread so the shape actually reads as data.
+ */
+export function LabeledTrendChart({
+  series,
+  width = 432,
+  height = 210,
+  color = WF.pumpkin,
+  style,
+}: {
+  series: ChartSeriesPoint[];
+  width?: number;
+  height?: number;
+  color?: string;
+  style?: CSSProperties;
+}) {
+  if (!series || series.length === 0) return <NoData height={height} />;
+
+  const padL = 46, padR = 10, padT = 20, padB = 22;
+  const cW = width - padL - padR;
+  const cH = height - padT - padB;
+
+  const values = series.map((p) => p.value);
+  const vmin = Math.min(...values);
+  const vmax = Math.max(...values);
+  const range = vmax - vmin;
+
+  const xOf = (i: number) =>
+    padL + (series.length === 1 ? cW / 2 : (i / (series.length - 1)) * cW);
+  const yOf = (v: number) =>
+    padT + (range === 0 ? cH / 2 : (1 - (v - vmin) / range) * cH);
+
+  const linePts = series.map((p, i) => `${xOf(i).toFixed(1)},${yOf(p.value).toFixed(1)}`).join(" ");
+  const peakIdx = values.indexOf(vmax);
+  const troughIdx = values.indexOf(vmin);
+
+  // Area fill path
+  const areaD = [
+    `M ${xOf(0).toFixed(1)},${yOf(values[0]).toFixed(1)}`,
+    ...series.slice(1).map((p, i) => `L ${xOf(i + 1).toFixed(1)},${yOf(p.value).toFixed(1)}`),
+    `L ${xOf(series.length - 1).toFixed(1)},${(padT + cH).toFixed(1)}`,
+    `L ${xOf(0).toFixed(1)},${(padT + cH).toFixed(1)} Z`,
+  ].join(" ");
+
+  // 3 y-axis gridlines at 25 / 50 / 75 % of range
+  const yGrids = [0.75, 0.5, 0.25].map((f) => ({ v: vmin + f * range, y: yOf(vmin + f * range) }));
+
+  // Show every label if ≤ 8 points, else every 2nd
+  const showLabel = (i: number) => series.length <= 8 || i % 2 === 0;
+
+  return (
+    <svg width="100%" viewBox={`0 0 ${width} ${height}`} style={{ display: "block", overflow: "visible", ...style }}>
+      {/* y-axis gridlines + labels */}
+      {yGrids.map(({ v, y }, gi) => (
+        <g key={gi}>
+          <line x1={padL} y1={y.toFixed(1)} x2={width - padR} y2={y.toFixed(1)} stroke={WF.sepiaSoft} strokeWidth="0.5" strokeDasharray="2 4" />
+          <text x={padL - 5} y={(y + 3.5).toFixed(1)} textAnchor="end" fontFamily="'IBM Plex Sans', system-ui, sans-serif" fontSize="8.5" fill={WF.inkSoft}>
+            {shortDollar(v)}
+          </text>
+        </g>
+      ))}
+
+      {/* x baseline */}
+      <line x1={padL} y1={(padT + cH).toFixed(1)} x2={width - padR} y2={(padT + cH).toFixed(1)} stroke={WF.sepiaSoft} strokeWidth="1" />
+
+      {/* area fill */}
+      <path d={areaD} fill={color} fillOpacity="0.08" />
+
+      {/* line */}
+      {series.length > 1 && (
+        <polyline points={linePts} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+      )}
+
+      {/* peak callout */}
+      <circle cx={xOf(peakIdx).toFixed(1)} cy={yOf(vmax).toFixed(1)} r="3.5" fill={color} />
+      <text
+        x={xOf(peakIdx).toFixed(1)} y={(yOf(vmax) - 7).toFixed(1)}
+        textAnchor={peakIdx === 0 ? "start" : peakIdx === series.length - 1 ? "end" : "middle"}
+        fontFamily="'IBM Plex Sans', system-ui, sans-serif" fontSize="9" fill={color} fontWeight="600"
+      >
+        {shortDollar(vmax)}
+      </text>
+
+      {/* trough callout (only if there's meaningful variance) */}
+      {range > vmax * 0.05 && troughIdx !== peakIdx && (
+        <>
+          <circle cx={xOf(troughIdx).toFixed(1)} cy={yOf(vmin).toFixed(1)} r="2.5" fill={WF.sepia} />
+          <text
+            x={xOf(troughIdx).toFixed(1)} y={(yOf(vmin) + 14).toFixed(1)}
+            textAnchor={troughIdx === 0 ? "start" : troughIdx === series.length - 1 ? "end" : "middle"}
+            fontFamily="'IBM Plex Sans', system-ui, sans-serif" fontSize="8.5" fill={WF.inkSoft}
+          >
+            {shortDollar(vmin)}
+          </text>
+        </>
+      )}
+
+      {/* x-axis month labels */}
+      {series.map((p, i) =>
+        showLabel(i) ? (
+          <text
+            key={i} x={xOf(i).toFixed(1)} y={(padT + cH + 14).toFixed(1)}
+            textAnchor="middle" fontFamily="'IBM Plex Sans', system-ui, sans-serif" fontSize="9" fill={WF.inkSoft}
+          >
+            {monthLabel(p.label)}
+          </text>
+        ) : null,
+      )}
+    </svg>
+  );
+}
+
 /**
  * BarChart — comparison bars (e.g. spend by category/merchant). Heights scale to the
  * largest value; the tallest bar is accented. Bars widen/narrow to fit the count.
