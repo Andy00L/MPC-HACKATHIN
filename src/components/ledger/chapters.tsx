@@ -9,8 +9,9 @@
  * renderLeft/renderRight are pure functions of (chapter, activeTarget, view); the
  * interactive review controls call the queue actions carried on view.queue directly.
  */
-import { useState, type CSSProperties, type ReactNode } from "react";
-import type { QueryResult, Violation } from "@/lib/contract";
+import { useState, useEffect, type CSSProperties, type ReactNode } from "react";
+import type { QueryResult, Violation, Category } from "@/lib/contract";
+import type { RuleSet } from "@/lib/rules";
 import { WF } from "./tokens";
 import { severityToMood } from "./severity";
 import { Stat, Chip, SevBadge, ActionBtn } from "./primitives";
@@ -19,13 +20,15 @@ import type { LedgerData } from "@/hooks/useLedgerData";
 import type { ReviewQueue } from "@/hooks/useReviewQueue";
 import type { ApprovalQueue } from "@/hooks/useApprovalQueue";
 import type { ReportsState } from "@/hooks/useReports";
+import type { PolicyState } from "@/hooks/usePolicyEngine";
 
 // Everything the chapter renderers need, passed in so the pages stay pure.
 export interface LedgerView {
   data: LedgerData;
   queue: ReviewQueue;
   approvals: ApprovalQueue; // the pre-approval queue (Feature 3), lazily fetched
-  reports: ReportsState; // the trip reports (Feature 4), lazily fetched
+  reports: ReportsState;    // the trip reports (Feature 4), lazily fetched
+  policy: PolicyState;      // the policy compliance engine (Feature 2), lazily fetched
   mode: "story" | "ledger";
   answer: QueryResult | null; // the active ask answer — overrides the right page when set
   asking: boolean; // an ask is in flight
@@ -135,6 +138,14 @@ function kpisFor(ch: number, view: LedgerView): Kpi[] {
       { value: fmtInt(flagged), label: "Flags across trips", accent: WF.rust },
     ];
   }
+  if (ch === 7) {
+    const { violations: pv, loading: pl } = view.policy;
+    const flaggedValue = pv.reduce((sum, v) => sum + v.txn.amount, 0);
+    return [
+      { value: pl ? "…" : fmtInt(pv.length), label: "Flags under the ordinance", accent: WF.rust },
+      { value: pl ? "…" : money(flaggedValue), label: "Flagged value", accent: WF.ochre },
+    ];
+  }
   return [];
 }
 
@@ -154,6 +165,21 @@ export function renderLeft(ch: number, activeTarget: string | null, view: Ledger
       </div>
     );
   }
+  if (ch === 7) {
+    const kpis = kpisFor(7, view);
+    return (
+      <>
+        <ChapterHead kicker="Chapter VII · The Ordinance" title="The Edicts of Spending" />
+        <POI id="kpis" active={activeTarget === "kpis"} style={{ left: 70, top: 128, width: 340 }}>
+          <div style={{ display: "flex", gap: 22 }}>
+            {kpis.map((kpi, i) => <Stat key={i} value={kpi.value} label={kpi.label} accent={kpi.accent ?? WF.ink} />)}
+          </div>
+        </POI>
+        <PolicyLeftPage view={view} />
+      </>
+    );
+  }
+
   const kpis = kpisFor(ch, view);
   const kicker = ["", "Chapter I · The Ledger", "Chapter II · The Map", "Chapter III · The Vendors", "Chapter IV · The Reckoning", "Chapter V · The Gatekeeper", "Chapter VI · The Roads"][ch] ?? "";
   const title = ["", "The Tale of the Months", "Where the Money Goes", "The Vendors", "The Reckoning", "Pre-Approval", "The Trips"][ch] ?? "";
@@ -472,6 +498,302 @@ function TripsView({ view }: { view: LedgerView }) {
   );
 }
 
+// Categories that accept dollar limits in the policy form (excludes alcohol, gift_card, other).
+const POLICY_CATEGORIES: Category[] = [
+  "fuel", "permits_gov", "vehicle_maintenance", "supplies", "tolls", "telecom", "digital",
+  "transport", "parking", "car_rental", "lodging", "airfare", "meal", "marketplace",
+];
+
+const CAT_LABELS: Record<string, string> = {
+  fuel: "Fuel", permits_gov: "Permits & Gov", vehicle_maintenance: "Vehicle Maint.",
+  supplies: "Supplies", tolls: "Tolls", telecom: "Telecom", digital: "Digital / SaaS",
+  transport: "Transport", parking: "Parking", car_rental: "Car Rental",
+  lodging: "Lodging", airfare: "Airfare", meal: "Meals", marketplace: "Marketplace",
+};
+
+interface FormDraft {
+  preauthThreshold: string;
+  splitThreshold: string;
+  enableAlcohol: boolean;
+  enableDuplicate: boolean;
+  enableAnomaly: boolean;
+  flagForeignTransactions: boolean;
+  enableMealContext: boolean;
+  limits: Record<string, string>;
+}
+
+function rulesToDraft(r: RuleSet): FormDraft {
+  return {
+    preauthThreshold: r.preauthThreshold > 0 ? String(r.preauthThreshold) : "",
+    splitThreshold: r.splitThreshold > 0 ? String(r.splitThreshold) : "",
+    enableAlcohol: r.enableAlcohol,
+    enableDuplicate: r.enableDuplicate,
+    enableAnomaly: r.enableAnomaly,
+    flagForeignTransactions: r.flagForeignTransactions,
+    enableMealContext: r.enableMealContext,
+    limits: Object.fromEntries(
+      POLICY_CATEGORIES.map((cat) => [cat, r.categoryLimits[cat] ? String(r.categoryLimits[cat]) : ""])
+    ),
+  };
+}
+
+function draftToRulePatch(d: FormDraft): Partial<RuleSet> {
+  return {
+    preauthThreshold: Number(d.preauthThreshold) || 0,
+    splitThreshold: Number(d.splitThreshold) || 0,
+    enableAlcohol: d.enableAlcohol,
+    enableDuplicate: d.enableDuplicate,
+    enableAnomaly: d.enableAnomaly,
+    flagForeignTransactions: d.flagForeignTransactions,
+    enableMealContext: d.enableMealContext,
+    categoryLimits: Object.fromEntries(
+      POLICY_CATEGORIES.map((cat) => [cat, Number(d.limits[cat]) || 0])
+    ),
+  };
+}
+
+// Parchment-style number input.
+function ParchmentInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder ?? "0"}
+      style={{
+        width: "100%", fontFamily: WF.data, fontSize: 11.5, color: WF.ink,
+        background: WF.page2, border: `1px solid ${WF.sepiaSoft}`, borderRadius: 4,
+        padding: "4px 8px", outline: "none", boxSizing: "border-box",
+        pointerEvents: "auto",
+      }}
+    />
+  );
+}
+
+// Toggle pill in the book palette.
+function Toggle({ label, on, onClick }: { label: string; on: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 5,
+        background: on ? WF.pine : "rgba(138,111,78,0.10)",
+        border: `1px solid ${on ? WF.pine : WF.sepiaSoft}`,
+        borderRadius: 11, padding: "4px 11px", cursor: "pointer",
+        color: on ? "#EFE2C9" : WF.inkSoft, fontFamily: WF.data, fontSize: 11,
+        transition: "all .15s", pointerEvents: "auto",
+      }}
+    >
+      <span style={{ width: 6, height: 6, borderRadius: 3, background: on ? "#EFE2C9" : WF.sepiaSoft, flexShrink: 0 }} />
+      {label}
+    </button>
+  );
+}
+
+function FormSectionLabel({ children }: { children: string }) {
+  return (
+    <div style={{ fontFamily: WF.data, fontSize: 9, letterSpacing: 1.5, textTransform: "uppercase", color: WF.pumpkin, marginBottom: 6, marginTop: 12 }}>
+      {children}
+    </div>
+  );
+}
+
+// Left page of ch7: chapter header + KPIs are rendered by renderLeft; this adds the form below.
+function PolicyLeftPage({ view }: { view: LedgerView }) {
+  const { policy } = view;
+  const [draft, setDraft] = useState<FormDraft>(() => rulesToDraft(policy.rules));
+  const [initialized, setInitialized] = useState(false);
+
+  // Sync from server once the real rules have loaded.
+  useEffect(() => {
+    if (!policy.loading && !initialized) {
+      setDraft(rulesToDraft(policy.rules));
+      setInitialized(true);
+    }
+  }, [policy.loading, policy.rules, initialized]);
+
+  const toggleFlag = (key: "enableAlcohol" | "enableDuplicate" | "enableAnomaly" | "flagForeignTransactions" | "enableMealContext") =>
+    setDraft((p) => ({ ...p, [key]: !p[key] }));
+
+  const handleSubmit = () => {
+    if (policy.saving) return;
+    void policy.updateRules(draftToRulePatch(draft));
+  };
+
+  return (
+    // Width is deliberately capped to the left half (left:70 + width:480 = 550px < 600px gutter).
+    <div style={{ position: "absolute", left: 70, top: 218, width: 480, bottom: 18, overflowY: "auto", pointerEvents: "auto" }}>
+
+      <FormSectionLabel>Pre-Authorization &amp; Split Detection</FormSectionLabel>
+      <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontFamily: WF.data, fontSize: 9.5, color: WF.inkSoft, marginBottom: 3 }}>Pre-Auth Limit $ (0 = off)</div>
+          <ParchmentInput value={draft.preauthThreshold} onChange={(v) => setDraft((p) => ({ ...p, preauthThreshold: v }))} placeholder="e.g. 50" />
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontFamily: WF.data, fontSize: 9.5, color: WF.inkSoft, marginBottom: 3 }}>Split Threshold $ (0 = off)</div>
+          <ParchmentInput value={draft.splitThreshold} onChange={(v) => setDraft((p) => ({ ...p, splitThreshold: v }))} placeholder="e.g. 50" />
+        </div>
+      </div>
+
+      <FormSectionLabel>Detection Flags</FormSectionLabel>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <Toggle label="Alcohol" on={draft.enableAlcohol} onClick={() => toggleFlag("enableAlcohol")} />
+        <Toggle label="Duplicates" on={draft.enableDuplicate} onClick={() => toggleFlag("enableDuplicate")} />
+        <Toggle label="Anomalies" on={draft.enableAnomaly} onClick={() => toggleFlag("enableAnomaly")} />
+        <Toggle label="Foreign" on={draft.flagForeignTransactions} onClick={() => toggleFlag("flagForeignTransactions")} />
+        <Toggle label="Meal context (AI)" on={draft.enableMealContext} onClick={() => toggleFlag("enableMealContext")} />
+      </div>
+
+      <FormSectionLabel>Category Spending Limits ($)</FormSectionLabel>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 14px" }}>
+        {POLICY_CATEGORIES.map((cat) => (
+          <div key={cat} style={{ display: "flex", alignItems: "center", gap: 7 }}>
+            <div style={{ fontFamily: WF.data, fontSize: 10, color: WF.inkSoft, width: 90, flexShrink: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {CAT_LABELS[cat] ?? cat}
+            </div>
+            <ParchmentInput
+              value={draft.limits[cat] ?? ""}
+              onChange={(v) => setDraft((p) => ({ ...p, limits: { ...p.limits, [cat]: v } }))}
+              placeholder="no limit"
+            />
+          </div>
+        ))}
+      </div>
+
+      <div style={{ marginTop: 14 }}>
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={policy.saving}
+          style={{
+            width: "100%", fontFamily: WF.data, fontSize: 12.5, fontWeight: 600,
+            color: "#fff", background: policy.saving ? WF.sepia : WF.pumpkin,
+            border: `1.5px solid ${policy.saving ? WF.sepia : WF.pumpkin}`,
+            borderRadius: 5, padding: "9px 0", cursor: policy.saving ? "default" : "pointer",
+            transition: "background .15s", pointerEvents: "auto",
+          }}
+        >
+          {policy.saving ? "The keeper is casting the net…" : "Seal the Ordinance ↵"}
+        </button>
+        {policy.error && (
+          <div style={{ fontFamily: WF.data, fontSize: 10.5, color: WF.rust, marginTop: 6 }}>{policy.error}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Badge for a violation in the policy panel.
+function PolicyViolationBadge({ ruleId, severity }: { ruleId: string; severity: number }) {
+  if (ruleId === "PENDING_CONTEXT") {
+    return (
+      <span style={{
+        display: "inline-flex", alignItems: "center", padding: "3px 9px",
+        borderRadius: 10, border: "1px solid rgba(100,70,160,0.45)",
+        background: "rgba(100,70,160,0.10)", color: "rgba(100,70,160,0.85)",
+        fontFamily: WF.data, fontSize: 10, whiteSpace: "nowrap",
+      }}>pending</span>
+    );
+  }
+  if (ruleId === "NON_REIMBURSABLE") return <Chip tone="sev" style={{ fontSize: 10, padding: "2px 8px" }}>not reimbursable</Chip>;
+  if (severity >= 2) return <Chip tone="sev" style={{ fontSize: 10, padding: "2px 8px" }}>alert</Chip>;
+  if (severity >= 1) return <Chip tone="warn" style={{ fontSize: 10, padding: "2px 8px" }}>warning</Chip>;
+  return <Chip tone="plain" style={{ fontSize: 10, padding: "2px 8px" }}>info</Chip>;
+}
+
+// Right page of ch7: violations found under the current rules.
+function PolicyRightPage({ view }: { view: LedgerView }) {
+  const { policy } = view;
+
+  if (policy.loading) {
+    return (
+      <div style={{ position: "absolute", left: 660, right: 36, top: 200, pointerEvents: "none" }}>
+        <div style={{ fontFamily: WF.body, fontStyle: "italic", fontSize: 18, color: WF.sepia }}>
+          The keeper casts the net across the ledger…
+        </div>
+      </div>
+    );
+  }
+
+  // When category limits are configured, show only CATEGORY_LIMIT / contextual
+  // violations — not the preauth/duplicate/anomaly noise from other active rules.
+  const hasLimits = Object.keys(policy.rules.categoryLimits).length > 0;
+  const displayed = hasLimits
+    ? policy.violations.filter((v) =>
+        v.ruleId === "CATEGORY_LIMIT" ||
+        v.ruleId === "PENDING_CONTEXT" ||
+        v.ruleId === "NON_REIMBURSABLE"
+      )
+    : policy.violations;
+
+  if (displayed.length === 0) {
+    return (
+      <div style={{ position: "absolute", left: 660, right: 36, top: 180, pointerEvents: "none" }}>
+        <div style={{ fontFamily: WF.data, fontSize: 9.5, letterSpacing: 1.4, textTransform: "uppercase", color: WF.pumpkin, marginBottom: 10 }}>
+          Flagged under the Ordinance
+        </div>
+        <div style={{ fontFamily: WF.body, fontStyle: "italic", fontSize: 17, color: WF.sage, lineHeight: 1.55 }}>
+          {hasLimits
+            ? "No charges exceed these limits. The ordinance is satisfied."
+            : "The ledger is clean under these terms. No charge breaks the rules as written."}
+        </div>
+      </div>
+    );
+  }
+
+  const shown = displayed.slice(0, 55);
+
+  return (
+    <div style={{ position: "absolute", left: 660, right: 36, top: 150, bottom: 18 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+        <div style={{ fontFamily: WF.data, fontSize: 9.5, letterSpacing: 1.4, textTransform: "uppercase", color: WF.pumpkin }}>
+          Flagged under the Ordinance
+        </div>
+        <div style={{ fontFamily: WF.data, fontSize: 11, color: WF.inkSoft }}>
+          {fmtInt(displayed.length)} {displayed.length === 1 ? "charge" : "charges"}
+        </div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, overflowY: "auto", maxHeight: 560 }}>
+        {shown.map((v) => {
+          const isAlert = v.severity >= 2;
+          const isWarn = v.severity >= 1;
+          const borderColor = v.ruleId === "PENDING_CONTEXT"
+            ? "rgba(100,70,160,0.3)"
+            : isAlert ? "rgba(158,59,46,0.4)" : isWarn ? "rgba(200,146,58,0.4)" : WF.sepiaSoft;
+          return (
+            <div key={v.txn.id} style={{ border: `1px solid ${borderColor}`, borderRadius: 4, background: WF.page, padding: "6px 10px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <span style={{ fontFamily: WF.serif, fontWeight: 600, fontSize: 13, color: WF.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {v.txn.merchant}
+                </span>
+                <span style={{ fontFamily: WF.data, fontWeight: 600, fontSize: 13, color: WF.rust, whiteSpace: "nowrap", flexShrink: 0 }}>
+                  {money(v.txn.amount)}
+                </span>
+              </div>
+              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                <PolicyViolationBadge ruleId={v.ruleId} severity={v.severity} />
+                {v.reasons[0] && (
+                  <span style={{ fontFamily: WF.data, fontSize: 9.5, color: WF.inkSoft, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {v.reasons[0]}
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+        {displayed.length > 55 && (
+          <div style={{ fontFamily: WF.data, fontSize: 10, color: WF.inkSoft, textAlign: "center", padding: "5px 0" }}>
+            …and {fmtInt(displayed.length - 55)} more
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── RIGHT page per chapter ──
 export function renderRight(ch: number, activeTarget: string | null, view: LedgerView): ReactNode {
   // An active ask answer (or in-flight ask) takes over the right page in any chapter.
@@ -571,6 +893,7 @@ export function renderRight(ch: number, activeTarget: string | null, view: Ledge
   if (ch === 4) return <EncounterView ch={ch} activeTarget={activeTarget} view={view} />;
   if (ch === 5) return <ApprovalView view={view} />;
   if (ch === 6) return <TripsView view={view} />;
+  if (ch === 7) return <PolicyRightPage view={view} />;
   return null;
 }
 
@@ -607,6 +930,9 @@ export const BEATS: Beat[] = [
 
   { ch: 6, x: 556, y: 168, face: "left", target: "kpis", mood: "neutral", pose: "pointing", line: "Every journey leaves its mark in the ledger. Here are the roads you traveled." },
   { ch: 6, x: 604, y: 320, face: "right", target: null, mood: "concerned", pose: "idle", line: "Open a trip, and I will show you its charges and any shadow that follows it." },
+
+  { ch: 7, x: 556, y: 168, face: "left", target: "kpis", mood: "neutral", pose: "pointing", line: "Here is where the rules are written. Every edict you set, I will enforce without hesitation." },
+  { ch: 7, x: 604, y: 360, face: "right", target: null, mood: "concerned", pose: "idle", line: "Seal the ordinance, and I will return with every charge that breaks it. The ledger does not forgive." },
 ];
 
 export const CHAPTERS = [
@@ -617,6 +943,7 @@ export const CHAPTERS = [
   { id: "violations", label: "Violations" },
   { id: "approvals", label: "Pre-Approval" },
   { id: "trips", label: "Trips" },
+  { id: "policy", label: "Policy" },
 ];
 
 /**
@@ -647,6 +974,12 @@ export function beatLine(beatIndex: number, view: LedgerView): string {
       return topVendor ? `Your spending gathers most at one door — ${topVendor.label}, ${money(topVendor.value)} in all.` : beat.line;
     case 8:
       return topFlag ? `And here it is — ${money(topFlag.txn.amount)} at ${topFlag.txn.merchant}. ${humanRule(topFlag.ruleId)}.` : beat.line;
+    case 14: {
+      const pv = view.policy.violations;
+      return pv.length > 0
+        ? `The ordinance has spoken — ${fmtInt(pv.length)} charges flagged under the rules as written.`
+        : "Write the rules, seal the ordinance, and I will read every charge against them.";
+    }
     default:
       return beat.line;
   }

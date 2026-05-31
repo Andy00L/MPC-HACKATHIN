@@ -1,24 +1,32 @@
 /**
  * app/api/violations/route.ts
- * GET /api/violations  ->  the policy-compliance results. Runs findViolations on the
- * dataset, fills each violation's in-character narration, and returns the ranked list
- * plus the repeat-offender ranking. Also returns transactionCount/spendCount so the UI
- * can show honest dataset totals without a separate overview endpoint. No body needed.
+ * GET /api/violations  →  two-pass policy scan:
+ *   Pass 1 (sync):  findViolations(transactions, rules) — deterministic rule checks.
+ *   Pass 2 (async): applyContextualRules — Gemini judgment for meal/alcohol rows.
+ * Returns ranked violations, repeat offenders, dataset totals, and the active rules.
  */
-
 import { NextResponse } from "next/server";
 import type { Transaction } from "@/lib/contract";
-import { findViolations, repeatOffenders } from "@/lib/compliance";
+import { findViolations, applyContextualRules, mergeViolationSets, repeatOffenders } from "@/lib/compliance";
+import { getRules } from "@/lib/rules";
 import { violationNarration } from "@/lib/gemini/persona";
 import dataset from "@/data/dataset.json";
+
+export const runtime = "nodejs";
 
 const transactions = dataset as Transaction[];
 
 export async function GET() {
   try {
-    const violations = findViolations(transactions).map((v) => ({
+    const rules = getRules();
+
+    const [base, contextual] = await Promise.all([
+      Promise.resolve(findViolations(transactions, rules)),
+      applyContextualRules(transactions, rules),
+    ]);
+
+    const violations = mergeViolationSets(base, contextual).map((v) => ({
       ...v,
-      // Fill the spoken line with the fast template (no Gemini call needed here).
       narration: violationNarration(v.ruleId, v.severity, v.txn.merchant),
     }));
 
@@ -28,6 +36,7 @@ export async function GET() {
       count: violations.length,
       transactionCount: transactions.length,
       spendCount: transactions.filter((t) => t.isSpend).length,
+      rules,
     });
   } catch (err) {
     console.error("GET /api/violations failed", err);

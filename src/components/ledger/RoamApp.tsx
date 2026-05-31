@@ -26,6 +26,7 @@ import { useVoice } from "@/hooks/useVoice";
 import { useReviewQueue } from "@/hooks/useReviewQueue";
 import { useApprovalQueue } from "@/hooks/useApprovalQueue";
 import { useReports } from "@/hooks/useReports";
+import { usePolicyEngine } from "@/hooks/usePolicyEngine";
 import { askData } from "@/lib/api/client";
 
 const STAGE_W = 1200;
@@ -91,6 +92,7 @@ export function RoamApp() {
   // is a model call); reports fetch whenever the Trips chapter is reached (cheap, deterministic).
   const approvals = useApprovalQueue(mode === "ledger" && ch === 5);
   const reports = useReports(ch === 6);
+  const policy = usePolicyEngine(ch === 7);
 
   // refs that always hold the latest value for the stable callbacks
   const chRef = useRef(0);
@@ -272,7 +274,7 @@ export function RoamApp() {
 
   // ── derive the active narration / mood / pose for this render ──
   const beat = BEATS[bi];
-  const view: LedgerView = { data, queue, approvals, reports, mode, answer: result, asking };
+  const view: LedgerView = { data, queue, approvals, reports, policy, mode, answer: result, asking };
   const inQueue = mode === "ledger" && ch === 4 && !result && !asking && !!queue.current;
   const inApprovals = mode === "ledger" && ch === 5 && !result && !asking && !!approvals.current;
   // The trips chapter has no per-item queue; the keeper's mood follows the worst flag found
@@ -336,12 +338,12 @@ export function RoamApp() {
   const leftContent = useMemo(
     () => renderLeft(ch, activeTarget, view),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [ch, activeTarget, data, mode, result, asking, queue.items, queue.currentIndex, queue.done, queue.counts, approvals.items, approvals.currentIndex, approvals.done, approvals.counts, approvals.loading, approvals.error, reports.reports, reports.loading, reports.error],
+    [ch, activeTarget, data, mode, result, asking, queue.items, queue.currentIndex, queue.done, queue.counts, approvals.items, approvals.currentIndex, approvals.done, approvals.counts, approvals.loading, approvals.error, reports.reports, reports.loading, reports.error, policy.rules, policy.violations, policy.loading, policy.saving, policy.error],
   );
   const rightContent = useMemo(
     () => renderRight(ch, activeTarget, view),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [ch, activeTarget, data, mode, result, asking, queue.items, queue.currentIndex, queue.done, queue.counts, approvals.items, approvals.currentIndex, approvals.done, approvals.counts, approvals.loading, approvals.error, reports.reports, reports.loading, reports.error],
+    [ch, activeTarget, data, mode, result, asking, queue.items, queue.currentIndex, queue.done, queue.counts, approvals.items, approvals.currentIndex, approvals.done, approvals.counts, approvals.loading, approvals.error, reports.reports, reports.loading, reports.error, policy.rules, policy.violations, policy.loading, policy.saving, policy.error],
   );
 
   const renderPage = (side: "L" | "R") => <Paper style={{ flex: 1, borderRadius: side === "L" ? "8px 2px 2px 8px" : "2px 8px 8px 2px", overflow: "hidden" }} />;
@@ -362,11 +364,13 @@ export function RoamApp() {
                   {renderPage("R")}
                 </div>
 
-                {/* page content — stable, always-visible layers (data must always read) */}
-                <div className="page-content" style={{ position: "absolute", inset: 0 }}>
+                {/* page content — stable, always-visible layers (data must always read).
+                    pointerEvents:none on the containers so neither full-stage div
+                    intercepts clicks meant for the other page; children restore auto. */}
+                <div className="page-content" style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
                   {leftContent}
                 </div>
-                <div className="page-content" style={{ position: "absolute", inset: 0 }}>
+                <div className="page-content" style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
                   {rightContent}
                 </div>
 

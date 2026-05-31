@@ -55,6 +55,14 @@ export function violationNarration(ruleId: string, severity: Severity, merchant:
       return `${opener} This sum towers far above its kind. Worth a careful look.`;
     case "SPLIT":
       return `${opener} Two small charges at ${merchant}, set just beneath the gate. A clever evasion.`;
+    case "CATEGORY_LIMIT":
+      return `${opener} A charge at ${merchant} has exceeded the spending limit set for its kind.`;
+    case "PENDING_CONTEXT":
+      return `The keeper pauses here. This entry at ${merchant} needs a receipt or guest list before it can be judged.`;
+    case "NON_REIMBURSABLE":
+      return `${opener} This charge at ${merchant} cannot be repaid — the policy is clear on the matter.`;
+    case "FOREIGN_TXN":
+      return `${opener} A charge from foreign soil, at ${merchant}. The ordinance asks that these be reviewed.`;
     default:
       return `${opener} This entry at ${merchant} deserves a second glance.`;
   }

@@ -6,6 +6,7 @@
  * contract (and assembled from contract types); nothing here redefines a shape.
  */
 import type { QueryResult, Violation, ExpenseReport, ApprovalItem } from "@/lib/contract";
+import type { RuleSet } from "@/lib/rules";
 
 // Discriminated result. `aborted` flags a request cancelled by an AbortSignal (a newer
 // question superseding an in-flight one) so the caller can stay silent rather than show
@@ -20,6 +21,16 @@ export interface ViolationsResponse {
   count: number;
   transactionCount: number;
   spendCount: number;
+  rules?: RuleSet;
+}
+
+export interface RulesResponse {
+  rules: RuleSet;
+}
+
+export interface SetRulesResponse {
+  rules: RuleSet;
+  violationCount: number;
 }
 export interface ReportsResponse {
   reports: ExpenseReport[];
@@ -118,6 +129,42 @@ export async function getApprovals(): Promise<ApiResult<ApprovalsResponse>> {
     return { ok: true, data: (await res.json()) as ApprovalsResponse };
   } catch {
     return { ok: false, error: "The approvals were unreadable." };
+  }
+}
+
+/** GET /api/rules — the active RuleSet. */
+export async function fetchRules(): Promise<ApiResult<RulesResponse>> {
+  let res: Response;
+  try {
+    res = await fetch("/api/rules", { method: "GET" });
+  } catch {
+    return { ok: false, error: "Could not reach the ledger." };
+  }
+  if (!res.ok) return { ok: false, error: await readError(res, "Could not fetch the rules.") };
+  try {
+    return { ok: true, data: (await res.json()) as RulesResponse };
+  } catch {
+    return { ok: false, error: "The rules were unreadable." };
+  }
+}
+
+/** POST /api/rules — patch the RuleSet. Returns updated rules + new violation count. */
+export async function saveRules(patch: Partial<RuleSet>): Promise<ApiResult<SetRulesResponse>> {
+  let res: Response;
+  try {
+    res = await fetch("/api/rules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+  } catch {
+    return { ok: false, error: "Could not reach the ledger." };
+  }
+  if (!res.ok) return { ok: false, error: await readError(res, "Could not save the rules.") };
+  try {
+    return { ok: true, data: (await res.json()) as SetRulesResponse };
+  } catch {
+    return { ok: false, error: "The rules response was unreadable." };
   }
 }
 

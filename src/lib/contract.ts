@@ -31,8 +31,15 @@ export type Category =
   | "tolls"
   | "telecom"
   | "digital"
-  | "gift_card"
   | "transport"
+  | "parking"
+  | "car_rental"
+  | "lodging"
+  | "airfare"
+  | "meal"
+  | "alcohol"
+  | "marketplace"
+  | "gift_card"
   | "other";
 
 // 0 neutral, 1 concerned, 2 alarmed. Drives the character's face and voice tone.
