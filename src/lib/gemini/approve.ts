@@ -9,6 +9,7 @@ import type { Transaction, ApprovalItem, Severity } from "../contract";
 import { ai, MODEL } from "./client";
 import { approvalSchema } from "./schemas";
 import { APPROVAL_PROMPT } from "./persona";
+import { stripFence, clampSeverity } from "./parse";
 import { budgetStatus, cardHistorySummary } from "../budgets";
 
 const PREAUTH_LIMIT = 50;
@@ -34,17 +35,30 @@ export async function buildApprovalItem(txn: Transaction, allTxns: Transaction[]
 
   let decision: { recommendation: "approve" | "deny"; reasoning: string; severity: Severity };
   try {
-    const resp = await ai.models.generateContent({
+    // Structured persona call through the proxy. json_object (not json_schema, which the
+    // proxy's Gemini backend rejects); the exact shape is stated in the prompt.
+    const completion = await ai.chat.completions.create({
       model: MODEL,
-      contents: context,
-      config: {
-        systemInstruction: APPROVAL_PROMPT,
-        responseMimeType: "application/json",
-        responseSchema: approvalSchema,
-      },
+      temperature: 0,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: `${APPROVAL_PROMPT}\n\nReturn ONLY a JSON object with exactly this shape:\n${JSON.stringify(approvalSchema)}` },
+        { role: "user", content: context },
+      ],
     });
-    decision = JSON.parse(resp.text ?? "");
+    const parsed = JSON.parse(stripFence(completion.choices?.[0]?.message?.content ?? "")) as {
+      recommendation?: unknown;
+      reasoning?: unknown;
+      severity?: unknown;
+    };
+    decision = {
+      // Anything other than an explicit "deny" is treated as approve.
+      recommendation: parsed.recommendation === "deny" ? "deny" : "approve",
+      reasoning: typeof parsed.reasoning === "string" && parsed.reasoning.trim() ? parsed.reasoning : "No reasoning was returned.",
+      severity: clampSeverity(parsed.severity),
+    };
   } catch {
+    // Conservative, deterministic fallback: deny when the category budget would be exceeded.
     decision = {
       recommendation: budget.remaining < txn.amount ? "deny" : "approve",
       reasoning:

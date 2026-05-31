@@ -1,0 +1,653 @@
+/**
+ * components/ledger/chapters.tsx
+ * Chapter content (the requirement "frames"). Each chapter is one spread: a left (Voice)
+ * page with the kicker/title + KPIs, and a right (Ledger) page with the view that flips.
+ * Ported from roam-chapters.jsx, then HYDRATED: every number/chart now comes from the
+ * live LedgerView (useLedgerData + useReviewQueue + the active ask answer), never from the
+ * wireframe's placeholder literals ($52,140 / 41% / the invented $55,000 BestBuy card).
+ *
+ * renderLeft/renderRight are pure functions of (chapter, activeTarget, view); the
+ * interactive review controls call the queue actions carried on view.queue directly.
+ */
+import { useState, type CSSProperties, type ReactNode } from "react";
+import type { QueryResult, Violation } from "@/lib/contract";
+import { WF } from "./tokens";
+import { severityToMood } from "./severity";
+import { Stat, Chip, SevBadge, ActionBtn } from "./primitives";
+import { BarChart, TrendChart, DonutChart, DataTable } from "./charts";
+import type { LedgerData } from "@/hooks/useLedgerData";
+import type { ReviewQueue } from "@/hooks/useReviewQueue";
+import type { ApprovalQueue } from "@/hooks/useApprovalQueue";
+import type { ReportsState } from "@/hooks/useReports";
+
+// Everything the chapter renderers need, passed in so the pages stay pure.
+export interface LedgerView {
+  data: LedgerData;
+  queue: ReviewQueue;
+  approvals: ApprovalQueue; // the pre-approval queue (Feature 3), lazily fetched
+  reports: ReportsState; // the trip reports (Feature 4), lazily fetched
+  mode: "story" | "ledger";
+  answer: QueryResult | null; // the active ask answer — overrides the right page when set
+  asking: boolean; // an ask is in flight
+}
+
+// ── formatting helpers ──
+const fmtInt = (n: number): string => n.toLocaleString("en-US");
+const money = (n: number | null | undefined): string => (n === null || n === undefined ? "—" : "$" + Math.round(n).toLocaleString("en-US"));
+
+// Human label for a rule id (the engine's stable ids -> plain language).
+const RULE_LABEL: Record<string, string> = {
+  OVER_PREAUTH: "Over the pre-authorization limit",
+  GIFT_CARD: "Gift card on a corporate card",
+  ALCOHOL: "Alcohol on a corporate card",
+  DUPLICATE: "Duplicate charge",
+  ANOMALY: "Anomalous amount",
+  SPLIT: "Possible split transaction",
+};
+const humanRule = (ruleId: string): string => RULE_LABEL[ruleId] ?? "Flagged for review";
+
+// ── POI: highlight wrapper the keeper points at ──
+export function POI({ id, active, children, style }: { id: string; active: boolean; children: ReactNode; style?: CSSProperties }) {
+  return (
+    <div data-poi={id} style={{ position: "absolute", ...style }}>
+      <div
+        style={{
+          position: "absolute",
+          inset: -11,
+          borderRadius: 10,
+          pointerEvents: "none",
+          border: active ? `2px dashed ${WF.gold}` : "2px dashed transparent",
+          background: active ? "rgba(231,178,76,0.10)" : "transparent",
+          boxShadow: active ? "0 0 0 4px rgba(231,178,76,0.10), 0 0 26px rgba(231,178,76,0.30)" : "none",
+          transition: "all .35s",
+          opacity: active ? 1 : 0,
+        }}
+      />
+      {children}
+    </div>
+  );
+}
+
+const ChapterHead = ({ kicker, title }: { kicker: string; title: string }) => (
+  <div style={{ position: "absolute", left: 70, top: 38 }}>
+    <div style={{ fontFamily: WF.data, fontSize: 11, letterSpacing: 1.6, textTransform: "uppercase", color: WF.pumpkin, marginBottom: 4 }}>{kicker}</div>
+    <div style={{ fontFamily: WF.serif, fontWeight: 600, fontSize: 33, color: WF.ink, lineHeight: 1.02, maxWidth: 420 }}>{title}</div>
+  </div>
+);
+
+const RightHead = ({ children }: { children: ReactNode }) => (
+  <div style={{ fontFamily: WF.data, fontSize: 12, fontWeight: 600, color: WF.ink, marginBottom: 10, letterSpacing: 0.2 }}>{children}</div>
+);
+
+interface Kpi {
+  value: ReactNode;
+  label: string;
+  accent?: string;
+}
+
+// Build the left-page KPIs for a chapter from live data. Returns [] for the cover.
+function kpisFor(ch: number, view: LedgerView): Kpi[] {
+  const { data, queue } = view;
+  if (ch === 1) {
+    return [
+      { value: money(data.totalSpend), label: "Total spend · 6 mo" },
+      { value: fmtInt(data.transactionCount), label: "Transactions" },
+      { value: fmtInt(data.flagCount), label: "Flags", accent: WF.rust },
+    ];
+  }
+  if (ch === 2) {
+    const top = data.categoryShare[0];
+    const sum = data.categoryShare.reduce((total, point) => total + point.value, 0);
+    const pct = top && sum > 0 ? Math.round((top.value / sum) * 100) : 0;
+    return [
+      { value: top ? `${pct}%` : "—", label: top ? `${top.label} — largest slice` : "Largest slice" },
+      { value: top ? money(top.value) : "—", label: top ? `on ${top.label.toLowerCase()} alone` : "Top category" },
+    ];
+  }
+  if (ch === 3) {
+    const topVendor = data.topVendors[0];
+    const repeatTop = data.repeatOffenders[0];
+    return [
+      { value: topVendor ? money(topVendor.value) : "—", label: topVendor ? `${topVendor.label} — top vendor` : "Top vendor" },
+      { value: repeatTop ? `${repeatTop.count}×` : "—", label: repeatTop ? `flags · ${repeatTop.merchant}` : "Repeat offenders", accent: WF.rust },
+    ];
+  }
+  if (ch === 4) {
+    const flaggedValue = queue.items.reduce((total, violation) => total + violation.txn.amount, 0);
+    return [
+      { value: fmtInt(data.flagCount), label: "Open flags" },
+      { value: money(flaggedValue), label: "Flagged value", accent: WF.rust },
+    ];
+  }
+  if (ch === 5) {
+    const approvalItems = view.approvals.items;
+    const denyCount = approvalItems.filter((item) => item.recommendation === "deny").length;
+    return [
+      { value: fmtInt(approvalItems.length), label: "Charges awaiting sign-off" },
+      { value: fmtInt(denyCount), label: "AI would deny", accent: WF.rust },
+    ];
+  }
+  if (ch === 6) {
+    const tripReports = view.reports.reports;
+    const flagged = tripReports.reduce((total, report) => total + report.violations.length, 0);
+    return [
+      { value: fmtInt(tripReports.length), label: "Trips on the road" },
+      { value: fmtInt(flagged), label: "Flags across trips", accent: WF.rust },
+    ];
+  }
+  return [];
+}
+
+// ── LEFT page per chapter ──
+export function renderLeft(ch: number, activeTarget: string | null, view: LedgerView): ReactNode {
+  if (ch === 0) {
+    return (
+      <div style={{ position: "absolute", left: 70, right: 50, top: 150 }}>
+        <div style={{ fontFamily: WF.data, fontSize: 10, letterSpacing: 3, textTransform: "uppercase", color: WF.pumpkin, marginBottom: 12 }}>Expense Intelligence</div>
+        <div style={{ fontFamily: WF.serif, fontWeight: 600, fontSize: 50, lineHeight: 0.98, color: WF.ink }}>The Ledger of the Unknown</div>
+        <div style={{ width: 54, height: 1.5, background: WF.sepia, margin: "20px 0" }} />
+        <div style={{ fontFamily: WF.body, fontStyle: "italic", fontSize: 15, color: WF.inkSoft, lineHeight: 1.5 }}>
+          Six months of fleet spending,
+          <br />
+          read aloud by the keeper who guards it.
+        </div>
+      </div>
+    );
+  }
+  const kpis = kpisFor(ch, view);
+  const kicker = ["", "Chapter I · The Ledger", "Chapter II · The Map", "Chapter III · The Vendors", "Chapter IV · The Reckoning", "Chapter V · The Gatekeeper", "Chapter VI · The Roads"][ch] ?? "";
+  const title = ["", "The Tale of the Months", "Where the Money Goes", "The Vendors", "The Reckoning", "Pre-Approval", "The Trips"][ch] ?? "";
+  return (
+    <>
+      <ChapterHead kicker={kicker} title={title} />
+      <POI id="kpis" active={activeTarget === "kpis"} style={{ left: 70, top: 128, width: ch === 1 ? 392 : 320 }}>
+        <div style={{ display: "flex", gap: 22 }}>
+          {kpis.map((kpi, index) => (
+            <Stat key={index} value={kpi.value} label={kpi.label} accent={kpi.accent ?? WF.ink} />
+          ))}
+        </div>
+      </POI>
+    </>
+  );
+}
+
+// ── The right-page answer view (shown when an ask is active) ──
+interface TraceEntry {
+  query: string;
+  rowCount: number;
+  error?: string;
+}
+
+// The keeper's notes: the SQL the agent actually ran for this answer, as a collapsible strip
+// of marginalia. Errors are tinted rust; successful queries show their row count. This is the
+// audit trail (additive), shown only when the answer carries a trace.
+function TracePanel({ trace }: { trace: TraceEntry[] }) {
+  if (!trace || trace.length === 0) return null;
+  return (
+    <details style={{ marginTop: 14 }}>
+      <summary style={{ fontFamily: WF.data, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", color: WF.inkSoft, cursor: "pointer" }}>
+        The keeper&apos;s notes ({trace.length} {trace.length === 1 ? "query" : "queries"})
+      </summary>
+      <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+        {trace.map((entry, index) => (
+          <div key={index} style={{ borderLeft: `2px solid ${entry.error ? WF.rust : WF.sepiaSoft}`, paddingLeft: 8 }}>
+            <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 10.5, color: WF.inkSoft, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{entry.query}</div>
+            <div style={{ fontFamily: WF.data, fontSize: 10, color: entry.error ? WF.rust : WF.sage }}>{entry.error ? `error: ${entry.error}` : `${entry.rowCount} row${entry.rowCount === 1 ? "" : "s"}`}</div>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function AnswerView({ result, asking }: { result: QueryResult | null; asking: boolean }) {
+  // "the keeper is reading the ledger" — request in flight, no answer yet.
+  if (asking && !result) {
+    return (
+      <div style={{ position: "absolute", left: 660, right: 36, top: 170 }}>
+        <div style={{ fontFamily: WF.body, fontStyle: "italic", fontSize: 18, color: WF.sepia }}>The keeper turns the pages, reading the ledger…</div>
+      </div>
+    );
+  }
+  if (!result) return null;
+  const { chart, tableRows, answerText } = result;
+  return (
+    <div style={{ position: "absolute", left: 660, right: 36, top: 150 }}>
+      <div style={{ fontFamily: WF.data, fontSize: 10, letterSpacing: 1.4, textTransform: "uppercase", color: WF.pumpkin, marginBottom: 4 }}>The keeper answers</div>
+      <div style={{ fontFamily: WF.serif, fontWeight: 600, fontSize: 22, color: WF.ink, lineHeight: 1.05, marginBottom: 12 }}>{chart.title || "An answer from the ledger"}</div>
+      {/* Pick the chart component by kind; "none" shows just the plain answer text. */}
+      {chart.kind === "bar" && <BarChart series={chart.series} width={432} height={150} />}
+      {chart.kind === "line" && <TrendChart series={chart.series} width={432} height={150} />}
+      {chart.kind === "donut" && <DonutChart series={chart.series} size={130} />}
+      {chart.kind === "none" && <div style={{ fontFamily: WF.body, fontSize: 16, lineHeight: 1.5, color: WF.ink }}>{answerText}</div>}
+      {tableRows && tableRows.length > 0 && (
+        <div style={{ marginTop: 14 }}>
+          <DataTable rows={tableRows} maxHeight={200} />
+        </div>
+      )}
+      <TracePanel trace={(result as QueryResult & { trace?: TraceEntry[] }).trace ?? []} />
+    </div>
+  );
+}
+
+// ── The chapter-4 encounter (one real violation) + review controls ──
+function EncounterView({ ch, activeTarget, view }: { ch: number; activeTarget: string | null; view: LedgerView }) {
+  const { queue, mode } = view;
+  const reviewing = mode === "ledger"; // live review only in Ledger mode
+
+  // No flags at all in this ledger.
+  if (queue.items.length === 0) {
+    return (
+      <div style={{ position: "absolute", left: 670, right: 40, top: 200 }}>
+        <div style={{ fontFamily: WF.serif, fontStyle: "italic", fontSize: 20, color: WF.sage }}>No flags in this ledger. The pages are clean.</div>
+      </div>
+    );
+  }
+
+  // Reviewing in Ledger mode and reached the end -> decision summary.
+  if (reviewing && queue.done) {
+    const { approved, dismissed, escalated } = queue.counts;
+    return (
+      <div style={{ position: "absolute", left: 670, right: 40, top: 190 }}>
+        <div style={{ fontFamily: WF.data, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", color: WF.inkSoft, marginBottom: 8 }}>The reckoning is done</div>
+        <div style={{ display: "flex", gap: 22 }}>
+          <Stat value={fmtInt(approved)} label="Approved" accent={WF.pine} />
+          <Stat value={fmtInt(dismissed)} label="Dismissed" />
+          <Stat value={fmtInt(escalated)} label="Escalated" accent={WF.rust} />
+        </div>
+      </div>
+    );
+  }
+
+  // The encounter shown: queue.current in Ledger mode, else the headline (worst) flag.
+  const violation: Violation | null = (reviewing ? queue.current : queue.items[0]) ?? null;
+  if (!violation) return null;
+  const index = reviewing ? queue.currentIndex : 0;
+  const total = queue.items.length;
+
+  return (
+    <>
+      <POI id="violation" active={activeTarget === "violation"} style={{ left: 670, top: 175, width: 448 }}>
+        <div style={{ position: "relative", border: `1.5px solid ${WF.sepia}`, borderRadius: 6, background: WF.page, padding: 18 }}>
+          <div style={{ position: "absolute", top: -11, right: 14 }}>
+            <SevBadge level={severityToMood(violation.severity)} />
+          </div>
+          <div style={{ fontFamily: WF.data, fontSize: 9.5, letterSpacing: 1, textTransform: "uppercase", color: WF.inkSoft, marginBottom: 5 }}>
+            Encounter {index + 1} of {fmtInt(total)} · {violation.txn.id} · {humanRule(violation.ruleId)}
+          </div>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>
+            <span style={{ fontFamily: WF.serif, fontWeight: 600, fontSize: 21, color: WF.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{violation.txn.merchant}</span>
+            <span style={{ fontFamily: WF.data, fontWeight: 600, fontSize: 22, color: WF.rust, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{money(violation.txn.amount)}</span>
+          </div>
+          <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 14 }}>
+            {violation.reasons.map((reason, reasonIndex) => (
+              <Chip key={reasonIndex} tone={violation.severity === 2 ? "sev" : "warn"}>
+                {reason}
+              </Chip>
+            ))}
+          </div>
+        </div>
+      </POI>
+      <POI id="actions" active={activeTarget === "actions"} style={{ left: 670, top: 452, width: 448 }}>
+        <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+          <ActionBtn label="Approve" kbd="A" tone="pine" onClick={queue.approve} disabled={!reviewing || queue.done} style={{ flex: 1 }} />
+          <ActionBtn label="Dismiss" kbd="D" tone="plain" onClick={queue.dismiss} disabled={!reviewing || queue.done} style={{ flex: 1 }} />
+          <ActionBtn label="Escalate" kbd="E" tone="rust" onClick={queue.escalate} disabled={!reviewing || queue.done} style={{ flex: 1 }} />
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ flex: 1, height: 5, background: WF.page2, borderRadius: 3, overflow: "hidden", border: `0.5px solid ${WF.sepiaSoft}` }}>
+            <div style={{ width: `${total > 0 ? (index / total) * 100 : 0}%`, height: "100%", background: WF.pumpkin, transition: "width .3s" }} />
+          </div>
+          <button
+            type="button"
+            onClick={queue.undo}
+            disabled={!reviewing}
+            style={{ fontFamily: WF.data, fontSize: 10, color: WF.inkSoft, border: `1px solid ${WF.sepiaSoft}`, borderRadius: 3, padding: "2px 7px", background: "transparent", cursor: reviewing ? "pointer" : "default", opacity: reviewing ? 1 : 0.5 }}
+          >
+            ↩ undo · Z
+          </button>
+        </div>
+        {!reviewing && (
+          <div style={{ fontFamily: WF.body, fontStyle: "italic", fontSize: 12.5, color: WF.sepia, marginTop: 8 }}>Switch to the Ledger ribbon to review these flags yourself.</div>
+        )}
+      </POI>
+    </>
+  );
+}
+
+// A centered note for the right page: loading, empty, error, and between-mode states.
+function CenteredNote({ children }: { children: ReactNode }) {
+  return (
+    <div style={{ position: "absolute", left: 660, right: 40, top: 200 }}>
+      <div style={{ fontFamily: WF.body, fontStyle: "italic", fontSize: 18, color: WF.sepia, lineHeight: 1.5 }}>{children}</div>
+    </div>
+  );
+}
+
+// The pre-approval encounter (Feature 3): one charge with its budget status, card history,
+// and the AI recommendation + reasoning, plus approve/deny controls (A/D, undo Z). Mirrors
+// the violations queue. Live review only in Ledger mode; Story mode shows a gentle prompt.
+function ApprovalView({ view }: { view: LedgerView }) {
+  const { approvals, mode } = view;
+  const reviewing = mode === "ledger";
+
+  if (approvals.loading) return <CenteredNote>The keeper gathers the charges that await your seal…</CenteredNote>;
+  if (approvals.error) return <CenteredNote>{approvals.error}</CenteredNote>;
+  if (!reviewing) return <CenteredNote>Switch to the Ledger ribbon, and I will bring you the charges that await approval.</CenteredNote>;
+  if (approvals.items.length === 0) return <CenteredNote>No charge awaits approval. The gate is quiet.</CenteredNote>;
+
+  // Reached the end: a small decision summary.
+  if (approvals.done) {
+    const { approved, denied } = approvals.counts;
+    return (
+      <div style={{ position: "absolute", left: 670, right: 40, top: 190 }}>
+        <div style={{ fontFamily: WF.data, fontSize: 10, letterSpacing: 1, textTransform: "uppercase", color: WF.inkSoft, marginBottom: 8 }}>Every charge has been judged</div>
+        <div style={{ display: "flex", gap: 22 }}>
+          <Stat value={fmtInt(approved)} label="Approved" accent={WF.pine} />
+          <Stat value={fmtInt(denied)} label="Denied" accent={WF.rust} />
+        </div>
+      </div>
+    );
+  }
+
+  const item = approvals.current;
+  if (!item) return null;
+  const index = approvals.currentIndex;
+  const total = approvals.items.length;
+  const budget = item.categoryBudget;
+  const recommendDeny = item.recommendation === "deny";
+
+  return (
+    <>
+      <div style={{ position: "absolute", left: 670, top: 162, width: 448 }}>
+        <div style={{ position: "relative", border: `1.5px solid ${WF.sepia}`, borderRadius: 6, background: WF.page, padding: 18 }}>
+          <div style={{ position: "absolute", top: -11, right: 14 }}>
+            <SevBadge level={severityToMood(item.severity)} />
+          </div>
+          <div style={{ fontFamily: WF.data, fontSize: 9.5, letterSpacing: 1, textTransform: "uppercase", color: WF.inkSoft, marginBottom: 5 }}>
+            Charge {index + 1} of {fmtInt(total)} · {item.txn.id} · {item.txn.category}
+          </div>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>
+            <span style={{ fontFamily: WF.serif, fontWeight: 600, fontSize: 21, color: WF.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.txn.merchant}</span>
+            <span style={{ fontFamily: WF.data, fontWeight: 600, fontSize: 22, color: WF.rust, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{money(item.txn.amount)}</span>
+          </div>
+          <div style={{ display: "flex", gap: 14, marginTop: 12, fontFamily: WF.data, fontSize: 11.5, color: WF.ink }}>
+            <span>Limit <b>{money(budget.limit)}</b></span>
+            <span>Spent <b>{money(budget.spent)}</b></span>
+            <span>Left <b style={{ color: budget.remaining < item.txn.amount ? WF.rust : WF.pine }}>{money(budget.remaining)}</b></span>
+          </div>
+          <div style={{ fontFamily: WF.data, fontSize: 11, color: WF.inkSoft, marginTop: 8 }}>{item.cardHistorySummary}</div>
+          <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 12 }}>
+            <Chip tone={recommendDeny ? "sev" : "plain"}>Keeper counsels: {recommendDeny ? "deny" : "approve"}</Chip>
+          </div>
+          <div style={{ fontFamily: WF.body, fontSize: 13.5, color: WF.ink, lineHeight: 1.45, marginTop: 10 }}>{item.reasoning}</div>
+        </div>
+      </div>
+      <div style={{ position: "absolute", left: 670, top: 478, width: 448 }}>
+        <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+          <ActionBtn label="Approve" kbd="A" tone="pine" onClick={approvals.approve} disabled={approvals.done} style={{ flex: 1 }} />
+          <ActionBtn label="Deny" kbd="D" tone="rust" onClick={approvals.deny} disabled={approvals.done} style={{ flex: 1 }} />
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ flex: 1, height: 5, background: WF.page2, borderRadius: 3, overflow: "hidden", border: `0.5px solid ${WF.sepiaSoft}` }}>
+            <div style={{ width: `${total > 0 ? (index / total) * 100 : 0}%`, height: "100%", background: WF.pumpkin, transition: "width .3s" }} />
+          </div>
+          <button type="button" onClick={approvals.undo} style={{ fontFamily: WF.data, fontSize: 10, color: WF.inkSoft, border: `1px solid ${WF.sepiaSoft}`, borderRadius: 3, padding: "2px 7px", background: "transparent", cursor: "pointer" }}>
+            ↩ undo · Z
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// The trips view (Feature 4): the list of route reports; open one to see its grouped charges
+// and its policy flags. Opened-report state is local to this component.
+function TripsView({ view }: { view: LedgerView }) {
+  const { reports } = view;
+  const [openIndex, setOpenIndex] = useState<number | null>(null);
+
+  if (reports.loading) return <CenteredNote>The keeper traces the roads you traveled…</CenteredNote>;
+  if (reports.error) return <CenteredNote>{reports.error}</CenteredNote>;
+  if (reports.reports.length === 0) return <CenteredNote>No trips found in this ledger.</CenteredNote>;
+
+  const opened = openIndex !== null ? reports.reports[openIndex] : null;
+
+  // A single opened trip: its grouped charges and any policy flags.
+  if (opened) {
+    const txnRows = opened.transactions.slice(0, 60).map((transaction) => ({
+      Date: transaction.txnDate ?? "n/a",
+      Merchant: transaction.merchant,
+      Category: transaction.category,
+      Amount: Math.round(transaction.amount),
+    }));
+    return (
+      <div style={{ position: "absolute", left: 660, right: 36, top: 150 }}>
+        <button type="button" onClick={() => setOpenIndex(null)} style={{ fontFamily: WF.data, fontSize: 10.5, color: WF.inkSoft, border: `1px solid ${WF.sepiaSoft}`, borderRadius: 3, padding: "2px 8px", background: "transparent", cursor: "pointer", marginBottom: 8 }}>
+          ◀ all trips
+        </button>
+        <div style={{ fontFamily: WF.serif, fontWeight: 600, fontSize: 20, color: WF.ink, lineHeight: 1.05 }}>{opened.label}</div>
+        <div style={{ fontFamily: WF.data, fontSize: 11, color: WF.inkSoft, marginTop: 4 }}>
+          {opened.region} · {opened.startDate} to {opened.endDate} · {money(opened.total)}
+        </div>
+        {opened.violations.length > 0 && (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+            {opened.violations.slice(0, 6).map((violation, violationIndex) => (
+              <Chip key={violationIndex} tone={violation.severity === 2 ? "sev" : "warn"}>
+                ⚑ {humanRule(violation.ruleId)} · {money(violation.txn.amount)}
+              </Chip>
+            ))}
+          </div>
+        )}
+        <div style={{ marginTop: 12 }}>
+          <DataTable rows={txnRows} maxHeight={300} />
+        </div>
+      </div>
+    );
+  }
+
+  // The list of trips.
+  return (
+    <div style={{ position: "absolute", left: 660, right: 36, top: 150 }}>
+      <RightHead>Trips on the road</RightHead>
+      <div style={{ display: "flex", flexDirection: "column", gap: 7, maxHeight: 430, overflowY: "auto" }}>
+        {reports.reports.map((report, reportIndex) => (
+          <button
+            key={report.id}
+            type="button"
+            onClick={() => setOpenIndex(reportIndex)}
+            style={{ textAlign: "left", border: `1px solid ${WF.sepiaSoft}`, borderRadius: 5, background: WF.page, padding: "9px 12px", cursor: "pointer" }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+              <span style={{ fontFamily: WF.serif, fontWeight: 600, fontSize: 15, color: WF.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{report.label}</span>
+              <span style={{ fontFamily: WF.data, fontWeight: 600, fontSize: 14, color: WF.ink, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{money(report.total)}</span>
+            </div>
+            <div style={{ fontFamily: WF.data, fontSize: 10.5, color: WF.inkSoft, marginTop: 3 }}>
+              {report.transactions.length} charges{report.violations.length > 0 ? ` · ${report.violations.length} flag${report.violations.length === 1 ? "" : "s"}` : ""}
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── RIGHT page per chapter ──
+export function renderRight(ch: number, activeTarget: string | null, view: LedgerView): ReactNode {
+  // An active ask answer (or in-flight ask) takes over the right page in any chapter.
+  if (view.asking || view.answer) {
+    return <AnswerView result={view.answer} asking={view.asking} />;
+  }
+
+  const { data } = view;
+
+  if (ch === 0) {
+    return (
+      <div style={{ position: "absolute", left: 600, right: 0, top: 0, bottom: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ position: "relative", marginBottom: 26 }}>
+          <div style={{ position: "absolute", inset: -46, background: `radial-gradient(circle, ${WF.gold}33, transparent 68%)` }} />
+          <svg width="54" height="70" viewBox="0 0 60 78" style={{ position: "relative" }}>
+            <line x1="30" y1="2" x2="30" y2="18" stroke={WF.gold} strokeWidth="2" />
+            <rect x="14" y="18" width="32" height="40" rx="3" fill={WF.gold} opacity="0.85" stroke="#7a5a20" strokeWidth="2" />
+            <rect x="14" y="12" width="32" height="8" rx="2" fill={WF.sepia} stroke="#7a5a20" strokeWidth="2" />
+          </svg>
+        </div>
+        <div style={{ fontFamily: WF.serif, fontStyle: "italic", fontSize: 19, color: WF.sepia, marginBottom: 22 }}>What do the books hide this month?</div>
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 9, background: WF.pumpkin, color: "#fff", padding: "11px 22px", borderRadius: 4, fontFamily: WF.data, fontSize: 13, fontWeight: 600, boxShadow: "0 8px 20px rgba(0,0,0,0.25)" }}>Open the ledger →</div>
+      </div>
+    );
+  }
+
+  if (ch === 1) {
+    const topFlag = data.violations[0];
+    const giftCard = data.violations.find((violation) => violation.ruleId === "GIFT_CARD");
+    return (
+      <>
+        <POI id="trend" active={activeTarget === "trend"} style={{ left: 678, top: 150, width: 432 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+            <RightHead>Spend over time</RightHead>
+            <span style={{ fontFamily: WF.data, fontSize: 11, color: WF.inkSoft }}>by month</span>
+          </div>
+          <TrendChart series={data.trend} width={432} height={150} />
+        </POI>
+        <POI id="finding" active={activeTarget === "finding"} style={{ left: 678, top: 420, width: 432 }}>
+          <RightHead>Passages worth marking</RightHead>
+          <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+            {topFlag && <Chip tone="sev">⚑ {topFlag.txn.merchant} {money(topFlag.txn.amount)}</Chip>}
+            {giftCard && <Chip tone="sev">⚑ gift card {money(giftCard.txn.amount)}</Chip>}
+            <Chip tone="warn">⚑ {fmtInt(data.flagCount)} flags in all</Chip>
+          </div>
+        </POI>
+      </>
+    );
+  }
+
+  if (ch === 2) {
+    return (
+      <>
+        <POI id="donut" active={activeTarget === "donut"} style={{ left: 700, top: 140, width: 320 }}>
+          <RightHead>By category</RightHead>
+          <DonutChart series={data.categoryShare} size={110} />
+        </POI>
+        <POI id="bars" active={activeTarget === "bars"} style={{ left: 678, top: 400, width: 432 }}>
+          <RightHead>Month over month</RightHead>
+          <BarChart series={data.trend} width={432} height={120} />
+        </POI>
+      </>
+    );
+  }
+
+  if (ch === 3) {
+    const top = data.categoryShare[0];
+    const sum = data.categoryShare.reduce((total, point) => total + point.value, 0);
+    const pct = top && sum > 0 ? Math.round((top.value / sum) * 100) : 0;
+    // Top vendors as table rows (columns derived by DataTable from these keys).
+    const vendorRows = data.topVendors.map((vendor) => ({ Vendor: vendor.label, Spend: Math.round(vendor.value) }));
+    return (
+      <>
+        <POI id="merchants" active={activeTarget === "merchants"} style={{ left: 678, top: 145, width: 432 }}>
+          <RightHead>Top vendors by spend</RightHead>
+          <DataTable rows={vendorRows} maxHeight={210} />
+        </POI>
+        <POI id="consolidation" active={activeTarget === "consolidation"} style={{ left: 678, top: 432, width: 432 }}>
+          <div style={{ border: `1.5px solid ${WF.pine}`, borderRadius: 6, background: "rgba(51,80,63,0.08)", padding: "13px 15px" }}>
+            <div style={{ fontFamily: WF.data, fontSize: 9.5, letterSpacing: 1, textTransform: "uppercase", color: WF.pine, marginBottom: 5 }}>Consolidation</div>
+            <div style={{ fontFamily: WF.body, fontSize: 14.5, color: WF.ink, lineHeight: 1.45 }}>
+              {top ? (
+                <>
+                  Your largest category, <b>{top.label}</b>, is <b>{pct}%</b> of all spend ({money(top.value)}). Routing it through fewer preferred vendors is the clearest place to save.
+                </>
+              ) : (
+                <>Spending spreads across many vendors. Routing it through fewer preferred vendors is the clearest place to save.</>
+              )}
+            </div>
+          </div>
+        </POI>
+      </>
+    );
+  }
+
+  // ch 4 — the violations encounter + review queue
+  if (ch === 4) return <EncounterView ch={ch} activeTarget={activeTarget} view={view} />;
+  if (ch === 5) return <ApprovalView view={view} />;
+  if (ch === 6) return <TripsView view={view} />;
+  return null;
+}
+
+// ── beats: keeper choreography (positions are static; lines are data-derived below) ──
+export interface Beat {
+  ch: number;
+  x: number;
+  y: number;
+  face: "left" | "right";
+  target: string | null;
+  mood: "neutral" | "concerned" | "alarmed";
+  pose: "idle" | "pointing";
+  line: string; // generic fallback, used until live data loads
+}
+
+export const BEATS: Beat[] = [
+  { ch: 0, x: 600, y: 560, face: "right", target: null, mood: "neutral", pose: "idle", line: "Welcome to the ledger. Shall we turn the first page?" },
+
+  { ch: 1, x: 556, y: 168, face: "left", target: "kpis", mood: "neutral", pose: "pointing", line: "Here is the tale of these months, told in totals — and a handful of charges I have marked." },
+  { ch: 1, x: 612, y: 250, face: "right", target: "trend", mood: "neutral", pose: "pointing", line: "Spending holds its shape, month to month — fuel and permits, the honest upkeep of a fleet." },
+  { ch: 1, x: 612, y: 470, face: "right", target: "finding", mood: "concerned", pose: "pointing", line: "But a few passages trouble me. One of them, gravely." },
+
+  { ch: 2, x: 1014, y: 258, face: "left", target: "donut", mood: "neutral", pose: "pointing", line: "Where does it all go? Let us see which slice burns the largest." },
+  { ch: 2, x: 612, y: 470, face: "right", target: "bars", mood: "concerned", pose: "pointing", line: "And it rises and falls with the seasons of the road." },
+
+  { ch: 3, x: 612, y: 280, face: "right", target: "merchants", mood: "neutral", pose: "pointing", line: "Your spending gathers at a few doors. It need not scatter so." },
+  { ch: 3, x: 612, y: 492, face: "right", target: "consolidation", mood: "concerned", pose: "pointing", line: "Bring the vendors together, and there is coin to be saved each year." },
+
+  { ch: 4, x: 604, y: 300, face: "right", target: "violation", mood: "alarmed", pose: "pointing", line: "And here it is — the charge that troubles me most of all." },
+  { ch: 4, x: 604, y: 500, face: "right", target: "actions", mood: "alarmed", pose: "pointing", line: "Approve, dismiss, or escalate. I would not let this one pass quietly." },
+
+  { ch: 5, x: 556, y: 168, face: "left", target: "kpis", mood: "neutral", pose: "pointing", line: "Some charges wait at the gate for a seal. Shall we weigh them together?" },
+  { ch: 5, x: 604, y: 320, face: "right", target: null, mood: "concerned", pose: "idle", line: "I will tell you what the budget allows and what this card has done before. The choice is yours: approve or deny." },
+
+  { ch: 6, x: 556, y: 168, face: "left", target: "kpis", mood: "neutral", pose: "pointing", line: "Every journey leaves its mark in the ledger. Here are the roads you traveled." },
+  { ch: 6, x: 604, y: 320, face: "right", target: null, mood: "concerned", pose: "idle", line: "Open a trip, and I will show you its charges and any shadow that follows it." },
+];
+
+export const CHAPTERS = [
+  { id: "cover", label: "Cover" },
+  { id: "tale", label: "The Tale" },
+  { id: "category", label: "Category" },
+  { id: "vendors", label: "Vendors" },
+  { id: "violations", label: "Violations" },
+  { id: "approvals", label: "Pre-Approval" },
+  { id: "trips", label: "Trips" },
+];
+
+/**
+ * The spoken line for a beat, woven from live data where it matters (so the keeper speaks
+ * the real $1.5M, the real top category, the real worst flag). Falls back to the beat's
+ * generic line until the data loads, so the tour is never silent or wrong.
+ */
+export function beatLine(beatIndex: number, view: LedgerView): string {
+  const beat = BEATS[beatIndex];
+  if (!beat) return "";
+  const { data } = view;
+  const topFlag = data.violations[0];
+  const topCat = data.categoryShare[0];
+  const topVendor = data.topVendors[0];
+  const catSum = data.categoryShare.reduce((total, point) => total + point.value, 0);
+  const catPct = topCat && catSum > 0 ? Math.round((topCat.value / catSum) * 100) : 0;
+
+  switch (beatIndex) {
+    case 1:
+      return data.totalSpend !== null
+        ? `In six months, ${money(data.totalSpend)} across ${fmtInt(data.transactionCount)} charges — and ${fmtInt(data.flagCount)} I have marked for a closer look.`
+        : beat.line;
+    case 3:
+      return topFlag ? `But a few passages trouble me. The gravest: ${topFlag.txn.merchant} at ${money(topFlag.txn.amount)}.` : beat.line;
+    case 4:
+      return topCat ? `Where does it all go? ${topCat.label} alone is ${catPct} parts in a hundred of every dollar.` : beat.line;
+    case 6:
+      return topVendor ? `Your spending gathers most at one door — ${topVendor.label}, ${money(topVendor.value)} in all.` : beat.line;
+    case 8:
+      return topFlag ? `And here it is — ${money(topFlag.txn.amount)} at ${topFlag.txn.merchant}. ${humanRule(topFlag.ruleId)}.` : beat.line;
+    default:
+      return beat.line;
+  }
+}

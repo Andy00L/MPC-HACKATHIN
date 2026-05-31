@@ -1,7 +1,7 @@
 /**
  * trips.ts
  * Groups spend into route reports using the date and geography the data actually
- * has. A trip is a run of charges close in time and dominant location. The data has
+ * has. A trip is a run of charges close in time, labeled by its dominant state. The data has
  * no employees, so a trip belongs to a route, not a person, which is honest for a
  * fleet card.
  */
@@ -65,9 +65,17 @@ function buildReport(group: Transaction[], index: number): ExpenseReport {
 }
 
 /**
- * Clusters real spend into trips. Walks transactions in date order and starts a new
- * trip when the gap exceeds GAP_DAYS or the dominant state changes. Transactions
- * with no date go into a single "undated" report rather than being dropped.
+ * Clusters real spend into trips. Walks transactions in date order and starts a new trip
+ * when the gap between consecutive charges exceeds GAP_DAYS, OR a calendar-month boundary
+ * is crossed. Two notes on why it is this and nothing cleverer:
+ *   - We do NOT split on a change of state. A single fleet route crosses many states within
+ *     one trip, and splitting per state shattered this data into thousands of one-charge
+ *     "trips". The dominant state still labels each trip.
+ *   - This fleet runs almost daily, so there are no multi-day gaps; clustering on the gap
+ *     alone collapses everything into one giant trip. The month boundary gives meaningful,
+ *     readable route reports (about one per month) without inventing a trip notion the data
+ *     does not contain.
+ * Transactions with no date go into one "undated" report rather than being dropped.
  */
 export function buildReports(allTxns: Transaction[]): ExpenseReport[] {
   const spend = spendOnly(allTxns);
@@ -84,9 +92,9 @@ export function buildReports(allTxns: Transaction[]): ExpenseReport[] {
     }
     const prev = current[current.length - 1];
     const gap = daysBetween(prev.txnDate!, t.txnDate!);
-    const stateChanged = t.state !== null && dominantState(current) !== t.state;
+    const monthChanged = prev.txnDate!.slice(0, 7) !== t.txnDate!.slice(0, 7);
 
-    if (gap > GAP_DAYS || stateChanged) {
+    if (gap > GAP_DAYS || monthChanged) {
       reports.push(buildReport(current, reports.length));
       current = [t];
     } else {

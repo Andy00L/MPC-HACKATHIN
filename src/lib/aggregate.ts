@@ -83,3 +83,16 @@ export function filterByCategory(txns: Transaction[], category: Category): Trans
 export function filterByMinAmount(txns: Transaction[], minAmount: number): Transaction[] {
   return spendOnly(txns).filter((t) => t.amount >= minAmount);
 }
+
+/**
+ * Case-insensitive substring match on the merchant name. Returns the matching transactions
+ * (spend or not; the caller decides what to do with them). An empty or whitespace-only
+ * query returns [] so a blank search never accidentally matches the whole dataset. This is
+ * the merchant-name search the old query planner lacked; the pre-approval history view uses
+ * it, and it is available to any caller.
+ */
+export function filterByMerchant(txns: Transaction[], merchantQuery: string): Transaction[] {
+  const needle = merchantQuery.trim().toLowerCase();
+  if (needle.length === 0) return [];
+  return txns.filter((t) => t.merchant.toLowerCase().includes(needle));
+}

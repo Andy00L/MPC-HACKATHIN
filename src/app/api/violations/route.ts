@@ -2,7 +2,8 @@
  * app/api/violations/route.ts
  * GET /api/violations  ->  the policy-compliance results. Runs findViolations on the
  * dataset, fills each violation's in-character narration, and returns the ranked list
- * plus the repeat-offender ranking. No body needed.
+ * plus the repeat-offender ranking. Also returns transactionCount/spendCount so the UI
+ * can show honest dataset totals without a separate overview endpoint. No body needed.
  */
 
 import { NextResponse } from "next/server";
@@ -25,6 +26,8 @@ export async function GET() {
       violations,
       repeatOffenders: repeatOffenders(violations),
       count: violations.length,
+      transactionCount: transactions.length,
+      spendCount: transactions.filter((t) => t.isSpend).length,
     });
   } catch (err) {
     console.error("GET /api/violations failed", err);

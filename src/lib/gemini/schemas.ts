@@ -1,49 +1,22 @@
 /**
  * gemini/schemas.ts
- * JSON-schema objects passed to Gemini via config.responseSchema, so the model
- * returns parseable JSON instead of prose. Enums must match the contract exactly.
+ * The JSON shapes the structured calls must return (the narration bridge and the approval
+ * reasoning). The proxy's Gemini backend rejects response_format json_schema, so we do NOT
+ * send these as a schema parameter; instead each caller sends
+ * response_format: { type: "json_object" } and embeds the relevant shape (stringified) in
+ * its prompt. Keeping the shapes here makes them the single source of the expected fields.
+ * severity is a bounded integer (minimum/maximum 0..2) rather than an enum, because the
+ * proxy/model rejects an integer enum on that field.
  */
 
-// Step 1 of talk-to-data: Gemini maps the question to a query plan.
-export const queryPlanSchema = {
-  type: "object",
-  properties: {
-    operation: {
-      type: "string",
-      enum: ["spendByCategory", "spendByMerchant", "spendOverTime", "totalSpend", "filterList"],
-    },
-    category: {
-      type: "string",
-      enum: [
-        "fuel",
-        "permits_gov",
-        "vehicle_maintenance",
-        "supplies",
-        "tolls",
-        "telecom",
-        "digital",
-        "gift_card",
-        "transport",
-        "other",
-        "all",
-      ],
-    },
-    startDate: { type: "string" }, // ISO yyyy-mm-dd, or empty
-    endDate: { type: "string" }, // ISO yyyy-mm-dd, or empty
-    minAmount: { type: "number" }, // 0 means no floor
-    timeBucket: { type: "string", enum: ["day", "week", "month", "none"] },
-    chartKind: { type: "string", enum: ["bar", "line", "donut", "none"] },
-  },
-  required: ["operation", "category", "chartKind"],
-};
-
-// Step 3 of talk-to-data: Gemini narrates the computed result in character.
+// The narration bridge: the persona call returns the keeper's answer text, spoken line,
+// and a severity, built from the agent's prose answer and a small sample of the SQL rows.
 export const narrationSchema = {
   type: "object",
   properties: {
     answerText: { type: "string" }, // plain-language answer
     narration: { type: "string" }, // the keeper's spoken line
-    severity: { type: "integer", enum: [0, 1, 2] },
+    severity: { type: "integer", minimum: 0, maximum: 2 },
   },
   required: ["answerText", "narration", "severity"],
 };
@@ -54,7 +27,7 @@ export const approvalSchema = {
   properties: {
     recommendation: { type: "string", enum: ["approve", "deny"] },
     reasoning: { type: "string" },
-    severity: { type: "integer", enum: [0, 1, 2] },
+    severity: { type: "integer", minimum: 0, maximum: 2 },
   },
   required: ["recommendation", "reasoning", "severity"],
 };

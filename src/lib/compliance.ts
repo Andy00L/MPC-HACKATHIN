@@ -6,15 +6,16 @@
  * and plain-language reasons.
  *
  * Thresholds come from the Brim expense policy (the $50 pre-authorization rule, the
- * personal-use / gift-card ban) and from the shape of the real data.
+ * gift-card and alcohol restrictions) and from the shape of the real data.
  */
 
 import type { Transaction, Violation, Severity } from "./contract";
 
-const PREAUTH_LIMIT = 50; // Expenses over $50 require pre-authorization.
+const PREAUTH_LIMIT = 50; // Policy: expenses over $50 require pre-authorization and a receipt.
 const HIGH_VALUE = 2000; // Above this, an over-limit charge is always severity 2.
 const DUP_WINDOW_DAYS = 1; // "Duplicate" means identical charges within this many days.
 const ANOMALY_Z = 3.5; // Modified z-score cutoff (Iglewicz and Hoaglin).
+const ANOMALY_MEDIAN_MULTIPLE = 4; // ...and the charge must also exceed 4x the category median.
 const MIN_BASELINE = 5; // A category needs at least this many charges to score anomalies.
 
 function pushToGroup<T>(groups: Map<string, T[]>, key: string, value: T): void {
@@ -60,6 +61,24 @@ function overPreauth(spend: Transaction[]): Violation[] {
     }));
 }
 
+// Policy: alcohol is not permitted unless dining with a customer. The card data carries no
+// dining context, so we surface the alcohol-purchase MCCs for human review rather than
+// auto-judging: 5921 (package/liquor stores) and 5813 (bars, lounges, taverns).
+function alcohol(spend: Transaction[]): Violation[] {
+  return spend
+    .filter((t) => t.mcc === "5921" || t.mcc === "5813")
+    .map((t) => ({
+      txn: t,
+      ruleId: "ALCOHOL",
+      severity: 1 as Severity,
+      reasons: [`Alcohol merchant (MCC ${t.mcc}); the policy permits alcohol only when dining with a customer`],
+      narration: "",
+    }));
+}
+
+// Policy: personal use of the corporate card is prohibited. A gift-card purchase (MCC 5947,
+// mapped to category gift_card by the parser) is a personal-use proxy, so we flag it for
+// review. Kept alongside ALCOHOL because this dataset has gift-card spend but no alcohol.
 function giftCard(spend: Transaction[]): Violation[] {
   return spend
     .filter((t) => t.category === "gift_card")
@@ -123,9 +142,14 @@ function anomalies(spend: Transaction[]): Violation[] {
     for (const t of txns) {
       let flagged = false;
       if (spread > 0) {
+        // Tightened: a charge must be BOTH a statistical outlier (modified z above the
+        // cutoff) AND more than 4x the category median, so a category that simply has a
+        // few genuinely large charges does not flag every one of them.
         const modifiedZ = (0.6745 * (t.amount - med)) / spread;
-        flagged = modifiedZ > ANOMALY_Z;
+        flagged = modifiedZ > ANOMALY_Z && med > 0 && t.amount > med * ANOMALY_MEDIAN_MULTIPLE;
       } else {
+        // Degenerate spread (MAD = 0): fall back to a median-multiple test, already well
+        // above the 4x floor.
         flagged = med > 0 && t.amount > med * 10;
       }
 
@@ -179,13 +203,15 @@ function splits(spend: Transaction[]): Violation[] {
 /**
  * Runs every rule, merges multiple flags on the same transaction into one card
  * (max severity, combined reasons, most-severe rule as the primary label), and
- * returns the result sorted worst-first for the review queue.
+ * returns the result sorted worst-first for the review queue (by severity, then by
+ * dollar amount so the largest exposures lead).
  */
 export function findViolations(allTxns: Transaction[]): Violation[] {
   const spend = allTxns.filter((t) => t.isSpend);
 
   const raw: Violation[] = [
     ...overPreauth(spend),
+    ...alcohol(spend),
     ...giftCard(spend),
     ...duplicates(spend),
     ...anomalies(spend),
@@ -206,7 +232,9 @@ export function findViolations(allTxns: Transaction[]): Violation[] {
     existing.reasons.push(...v.reasons);
   }
 
-  return [...merged.values()].sort((a, b) => b.severity - a.severity);
+  // Worst-first: severity descending, then dollar amount descending so the largest
+  // exposures lead the review queue (the $55k charge surfaces before a $300 one).
+  return [...merged.values()].sort((a, b) => b.severity - a.severity || b.txn.amount - a.txn.amount);
 }
 
 /** Ranks merchants by how many flags they trip. Surfaces repeat offenders. */

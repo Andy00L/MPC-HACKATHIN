@@ -1,0 +1,31 @@
+{
+  "name": "ledger-of-the-unknown",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "preprocess": "tsx scripts/preprocess.ts",
+    "test:data": "tsx scripts/groundtruth.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.10.0",
+    "next": "^15.5.0",
+    "openai": "^6.39.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^20.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "tsx": "^4.22.0",
+    "typescript": "^5.6.0"
+  }
+}

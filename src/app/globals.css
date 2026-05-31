@@ -1,0 +1,135 @@
+/*
+ * app/globals.css
+ * Global base + animation keyframes for "The Roaming Keeper". Ported verbatim from the
+ * <style> block of the original standalone HTML host (Ledger - Roaming Keeper.html) so
+ * the keeper bob/walk, the pulsing lantern aura, and the page-turn leaf behave exactly
+ * as designed. The page-turn leaf provides the visual transition; page CONTENT always
+ * stays fully visible (never gated behind a remount-driven fade), so data always reads.
+ */
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: #1c2620;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* idle float + walking lean */
+@keyframes keeperFloat {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+@keyframes keeperWalk {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-1.5deg);
+  }
+  50% {
+    transform: translateY(-7px) rotate(1.5deg);
+  }
+}
+.keeper-bob {
+  animation: keeperFloat 3.4s ease-in-out infinite;
+  transform-origin: bottom center;
+}
+.keeper-bob.keeper-walk {
+  animation: keeperWalk 0.42s ease-in-out infinite;
+}
+
+/* pulsing lantern aura */
+@keyframes keeperGlow {
+  0%,
+  100% {
+    opacity: 0.55;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  50% {
+    opacity: 0.95;
+    transform: translate(-50%, -50%) scale(1.09);
+  }
+}
+.keeper-glow {
+  animation: keeperGlow 3.8s ease-in-out infinite;
+}
+
+/* page content rests fully visible — never gated behind a remount-driven fade.
+   The page-turn leaf provides the transition; data must always read. */
+.page-content {
+  opacity: 1;
+}
+.page-content.dissolve {
+  animation: pageFade 0.42s ease both;
+}
+@keyframes pageFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* the turning leaf (page-flip) */
+.page-leaf {
+  transform-origin: left center;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+.page-leaf.fwd,
+.page-leaf.back {
+  animation: leafTurn 0.56s cubic-bezier(0.42, 0.04, 0.34, 1) forwards;
+}
+@keyframes leafTurn {
+  0% {
+    transform: rotateY(0deg);
+  }
+  100% {
+    transform: rotateY(-176deg);
+  }
+}
+.leaf-face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  background: linear-gradient(105deg, #e9daba 0%, #efe2c9 48%, #e4d2b0 100%);
+  border-radius: 2px 8px 8px 2px;
+  box-shadow: inset 0 0 60px rgba(138, 111, 78, 0.22), -10px 0 30px rgba(0, 0, 0, 0.2);
+}
+.leaf-face::after {
+  content: "";
+  position: absolute;
+  inset: 14px;
+  border: 1px solid rgba(138, 111, 78, 0.4);
+  border-radius: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .keeper-bob,
+  .keeper-bob.keeper-walk {
+    animation: none;
+  }
+  .keeper-glow {
+    animation: none;
+  }
+  .page-leaf.fwd,
+  .page-leaf.back {
+    animation-duration: 0.28s;
+  }
+  .page-content {
+    animation-duration: 0.25s;
+  }
+}
