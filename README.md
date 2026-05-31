@@ -36,8 +36,7 @@ Plain English in, the right chart/table/number out. The model gets a data dictio
 <td width="50%" valign="top">
 
 ### Policy compliance engine
-Finance sets the rules (pre-auth threshold, per-category caps, toggles); the scan updates live. Code handles determinate checks (duplicate, split, anomaly, foreign, gift card); the AI handles ambiguous cases (`meal`/`alcohol` to "receipt required"). Ranked worst-first.
-
+Finance sets the rules (pre-auth threshold, per-category caps, toggles); the scan updates live.
 </td>
 </tr>
 <tr>
