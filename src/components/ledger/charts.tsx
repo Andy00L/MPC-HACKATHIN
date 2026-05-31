@@ -181,48 +181,65 @@ export function BarChart({
   width = 432,
   height = 120,
   color = WF.pine,
+  showLabels = false,
   style,
 }: {
   series: ChartSeriesPoint[];
   width?: number;
   height?: number;
   color?: string;
+  showLabels?: boolean;
   style?: CSSProperties;
 }) {
   // Guard: nothing to draw.
   if (!series || series.length === 0) return <NoData height={height} />;
 
-  // Guard: negatives are meaningless as a bar height, so clamp them to 0.
+  const labelH = showLabels ? 16 : 0;
+  const barArea = height - labelH; // usable height for bars
+
   const values = series.map((point) => Math.max(point.value, 0));
   const max = Math.max(...values);
-  // Guard: all-zero (or all-negative) input — avoid divide-by-zero; bars render flat.
   const denom = max > 0 ? max : 1;
 
   const barWidth = width / (series.length * 1.6);
+  const barXOf = (i: number) => i * barWidth * 1.6 + barWidth * 0.3;
+  const barCenterXOf = (i: number) => barXOf(i) + barWidth / 2;
+
   return (
     <svg width="100%" viewBox={`0 0 ${width} ${height}`} style={{ display: "block", ...style }}>
-      <line x1="0" y1={height - 1} x2={width} y2={height - 1} stroke={WF.sepiaSoft} strokeWidth="1" />
+      <line x1="0" y1={barArea - 1} x2={width} y2={barArea - 1} stroke={WF.sepiaSoft} strokeWidth="1" />
       {series.map((point, index) => {
         const clamped = values[index];
-        const barHeight = (height - 6) * (clamped / denom);
-        // Accent the tallest bar (only when there is real spend to accent).
+        const barHeight = (barArea - 6) * (clamped / denom);
         const isPeak = max > 0 && clamped === max;
         return (
           <rect
             key={`${point.label}-${index}`}
-            x={index * barWidth * 1.6 + barWidth * 0.3}
-            y={(height - 6) - barHeight}
+            x={barXOf(index)}
+            y={(barArea - 6) - barHeight}
             width={barWidth}
             height={barHeight}
             fill={isPeak ? WF.pumpkin : color}
             opacity={isPeak ? 0.92 : 0.78}
             rx="1.5"
           >
-            {/* hover tooltip — gives the label/value the sketch never showed */}
             <title>{`${point.label}: ${point.value.toLocaleString("en-US")}`}</title>
           </rect>
         );
       })}
+      {showLabels && series.map((point, index) => (
+        <text
+          key={`lbl-${index}`}
+          x={barCenterXOf(index)}
+          y={barArea + labelH - 3}
+          textAnchor="middle"
+          fontFamily="'IBM Plex Sans', system-ui, sans-serif"
+          fontSize="8.5"
+          fill={WF.inkSoft}
+        >
+          {monthLabel(point.label)}
+        </text>
+      ))}
     </svg>
   );
 }

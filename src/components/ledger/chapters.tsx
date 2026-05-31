@@ -12,7 +12,7 @@
 import { useState, useEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import type { QueryResult, Violation, Category } from "@/lib/contract";
 import type { RuleSet } from "@/lib/rules";
-import { WF } from "./tokens";
+import { WF, SERIES_COLORS } from "./tokens";
 import { severityToMood } from "./severity";
 import { Stat, Chip, SevBadge, ActionBtn } from "./primitives";
 import { BarChart, TrendChart, LabeledTrendChart, DonutChart, DataTable } from "./charts";
@@ -202,8 +202,47 @@ export function renderLeft(ch: number, activeTarget: string | null, view: Ledger
   const kicker = ["", "Chapter I · The Ledger", "Chapter II · The Map", "Chapter III · The Vendors", "Chapter IV · The Reckoning", "Chapter V · The Gatekeeper", "Chapter VI · The Roads"][ch] ?? "";
   const title = ["", "The Tale of the Months", "Where the Money Goes", "The Vendors", "The Reckoning", "Pre-Approval", "The Trips"][ch] ?? "";
 
-  // ch1 gets an extra category-spend breakdown below the KPIs to fill the left page.
-  const ch1CategoryBars = ch === 1 && view.data.categoryShare.length > 0 && (
+  // ch4 gets a progress block below the KPIs so the left page isn't empty.
+  const ch4Progress = ch === 4 && view.queue.items.length > 0 && (() => {
+    const { queue } = view;
+    const total = queue.items.length;
+    const index = view.mode === "ledger" ? queue.currentIndex : 0;
+    const { approved, dismissed, escalated } = queue.counts;
+    const decided = approved + dismissed + escalated;
+    return (
+      <div style={{ position: "absolute", left: 70, top: 210, width: 480 }}>
+        <div style={{ fontFamily: WF.data, fontSize: 9, letterSpacing: 1.5, textTransform: "uppercase", color: WF.pumpkin, marginBottom: 8 }}>
+          Progress
+        </div>
+        <div style={{ fontFamily: WF.serif, fontWeight: 600, fontSize: 26, color: WF.ink, marginBottom: 6 }}>
+          {index + 1} <span style={{ fontFamily: WF.data, fontSize: 14, color: WF.inkSoft, fontWeight: 400 }}>of {fmtInt(total)}</span>
+        </div>
+        <div style={{ height: 6, background: WF.page2, borderRadius: 3, overflow: "hidden", border: `0.5px solid ${WF.sepiaSoft}`, marginBottom: 16 }}>
+          <div style={{ width: `${total > 0 ? (index / total) * 100 : 0}%`, height: "100%", background: WF.pumpkin, transition: "width .3s" }} />
+        </div>
+        {decided > 0 && (
+          <div style={{ display: "flex", gap: 22 }}>
+            {approved > 0 && <Stat value={fmtInt(approved)} label="Approved" accent={WF.pine} />}
+            {dismissed > 0 && <Stat value={fmtInt(dismissed)} label="Dismissed" />}
+            {escalated > 0 && <Stat value={fmtInt(escalated)} label="Escalated" accent={WF.rust} />}
+          </div>
+        )}
+        {decided === 0 && view.mode === "ledger" && (
+          <div style={{ fontFamily: WF.body, fontStyle: "italic", fontSize: 13, color: WF.sepia }}>
+            No decisions yet — approve, dismiss, or escalate each flag.
+          </div>
+        )}
+        {view.mode !== "ledger" && (
+          <div style={{ fontFamily: WF.body, fontStyle: "italic", fontSize: 13, color: WF.sepia }}>
+            Switch to the Ledger ribbon to begin reviewing.
+          </div>
+        )}
+      </div>
+    );
+  })();
+
+  // ch2 gets a category-spend breakdown below the KPIs (moved here from ch1).
+  const ch2CategoryBars = ch === 2 && view.data.categoryShare.length > 0 && (
     <div style={{ position: "absolute", left: 70, top: 205, width: 488 }}>
       <div style={{ fontFamily: WF.data, fontSize: 9, letterSpacing: 1.4, textTransform: "uppercase", color: WF.pumpkin, marginBottom: 9 }}>
         Spend by category
@@ -238,7 +277,8 @@ export function renderLeft(ch: number, activeTarget: string | null, view: Ledger
           ))}
         </div>
       </POI>
-      {ch1CategoryBars}
+      {ch2CategoryBars}
+      {ch4Progress}
     </>
   );
 }
@@ -337,9 +377,20 @@ function EncounterView({ ch, activeTarget, view }: { ch: number; activeTarget: s
   const index = reviewing ? queue.currentIndex : 0;
   const total = queue.items.length;
 
+  // Vertically-centered flex column — card first, buttons immediately below.
+  // Using plain divs (not POI) so nothing is position:absolute inside the flex container.
+  // The POI glow is replicated manually via the activeTarget prop.
   return (
-    <>
-      <POI id="violation" active={activeTarget === "violation"} style={{ left: 670, top: 175, width: 448 }}>
+    <div style={{
+      position: "absolute", left: 670, right: 40, top: 60, bottom: 60,
+      display: "flex", flexDirection: "column", justifyContent: "center", gap: 16,
+      pointerEvents: "auto",
+    }}>
+      {/* Violation card */}
+      <div data-poi="violation" style={{ position: "relative" }}>
+        {activeTarget === "violation" && (
+          <div style={{ position: "absolute", inset: -11, borderRadius: 10, pointerEvents: "none", border: `2px dashed ${WF.gold}`, background: "rgba(231,178,76,0.10)", boxShadow: "0 0 0 4px rgba(231,178,76,0.10), 0 0 26px rgba(231,178,76,0.30)" }} />
+        )}
         <div style={{ position: "relative", border: `1.5px solid ${WF.sepia}`, borderRadius: 6, background: WF.page, padding: 18 }}>
           <div style={{ position: "absolute", top: -11, right: 14 }}>
             <SevBadge level={severityToMood(violation.severity)} />
@@ -353,37 +404,36 @@ function EncounterView({ ch, activeTarget, view }: { ch: number; activeTarget: s
           </div>
           <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 14 }}>
             {violation.reasons.map((reason, reasonIndex) => (
-              <Chip key={reasonIndex} tone={violation.severity === 2 ? "sev" : "warn"}>
+              <Chip key={reasonIndex} tone={violation.severity === 2 ? "sev" : "warn"}
+                style={{ whiteSpace: "normal", maxWidth: "100%", lineHeight: 1.4 }}>
                 {reason}
               </Chip>
             ))}
           </div>
         </div>
-      </POI>
-      <POI id="actions" active={activeTarget === "actions"} style={{ left: 670, bottom: 30, width: 448, pointerEvents: "auto" }}>
+      </div>
+
+      {/* Approve / Dismiss / Escalate — sits directly below the card in flex flow */}
+      <div data-poi="actions" style={{ pointerEvents: "auto" }}>
         <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
-          <ActionBtn label="Approve" kbd="A" tone="pine" onClick={queue.approve} disabled={!reviewing || queue.done} style={{ flex: 1 }} />
-          <ActionBtn label="Dismiss" kbd="D" tone="plain" onClick={queue.dismiss} disabled={!reviewing || queue.done} style={{ flex: 1 }} />
-          <ActionBtn label="Escalate" kbd="E" tone="rust" onClick={queue.escalate} disabled={!reviewing || queue.done} style={{ flex: 1 }} />
+          <ActionBtn label="Approve" kbd="A" tone="pine" onClick={queue.approve} disabled={!reviewing || queue.done} style={{ flex: 1, pointerEvents: "auto" }} />
+          <ActionBtn label="Dismiss" kbd="D" tone="plain" onClick={queue.dismiss} disabled={!reviewing || queue.done} style={{ flex: 1, pointerEvents: "auto" }} />
+          <ActionBtn label="Escalate" kbd="E" tone="rust" onClick={queue.escalate} disabled={!reviewing || queue.done} style={{ flex: 1, pointerEvents: "auto" }} />
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ flex: 1, height: 5, background: WF.page2, borderRadius: 3, overflow: "hidden", border: `0.5px solid ${WF.sepiaSoft}` }}>
             <div style={{ width: `${total > 0 ? (index / total) * 100 : 0}%`, height: "100%", background: WF.pumpkin, transition: "width .3s" }} />
           </div>
-          <button
-            type="button"
-            onClick={queue.undo}
-            disabled={!reviewing}
-            style={{ fontFamily: WF.data, fontSize: 10, color: WF.inkSoft, border: `1px solid ${WF.sepiaSoft}`, borderRadius: 3, padding: "2px 7px", background: "transparent", cursor: reviewing ? "pointer" : "default", opacity: reviewing ? 1 : 0.5 }}
-          >
+          <button type="button" onClick={queue.undo} disabled={!reviewing}
+            style={{ fontFamily: WF.data, fontSize: 10, color: WF.inkSoft, border: `1px solid ${WF.sepiaSoft}`, borderRadius: 3, padding: "2px 7px", background: "transparent", cursor: reviewing ? "pointer" : "default", opacity: reviewing ? 1 : 0.5, pointerEvents: "auto" }}>
             ↩ undo · Z
           </button>
         </div>
         {!reviewing && (
           <div style={{ fontFamily: WF.body, fontStyle: "italic", fontSize: 12.5, color: WF.sepia, marginTop: 8 }}>Switch to the Ledger ribbon to review these flags yourself.</div>
         )}
-      </POI>
-    </>
+      </div>
+    </div>
   );
 }
 
@@ -940,15 +990,38 @@ export function renderRight(ch: number, activeTarget: string | null, view: Ledge
   }
 
   if (ch === 2) {
+    const catSum = data.categoryShare.reduce((s, p) => s + p.value, 0);
+    // Top 10 categories for the legend; beyond that the names crowd together.
+    const legendItems = data.categoryShare.slice(0, 10);
     return (
       <>
-        <POI id="donut" active={activeTarget === "donut"} style={{ left: 700, top: 140, width: 320 }}>
+        {/* Full right-page width so the legend never reaches the Keeper (x≈1014) */}
+        <POI id="donut" active={activeTarget === "donut"} style={{ left: 670, top: 138, width: 462 }}>
           <RightHead>By category</RightHead>
-          <DonutChart series={data.categoryShare} size={110} />
+          <div style={{ display: "flex", gap: 18, alignItems: "flex-start" }}>
+            {/* Ring without built-in legend — keeps it compact */}
+            <DonutChart series={data.categoryShare} size={160} showLegend={false} style={{ flexShrink: 0 }} />
+            {/* Compact 2-column legend to the right of the ring */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "5px 14px", fontFamily: WF.data, fontSize: 10.5, color: WF.ink, alignContent: "start", paddingTop: 4 }}>
+              {legendItems.map((p, i) => {
+                const pct = catSum > 0 ? Math.round((p.value / catSum) * 100) : 0;
+                return (
+                  <span key={i} style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    <b style={{ color: SERIES_COLORS[i % SERIES_COLORS.length] }}>●</b>{" "}
+                    {p.label} · {pct}%
+                  </span>
+                );
+              })}
+              {data.categoryShare.length > 10 && (
+                <span style={{ color: WF.inkSoft, fontStyle: "italic" }}>+ {data.categoryShare.length - 10} more</span>
+              )}
+            </div>
+          </div>
         </POI>
+        {/* Bar chart sits clearly below the donut block (ring=160px + head≈20px + padding) */}
         <POI id="bars" active={activeTarget === "bars"} style={{ left: 678, top: 400, width: 432 }}>
           <RightHead>Month over month</RightHead>
-          <BarChart series={data.trend} width={432} height={120} />
+          <BarChart series={data.trend} width={432} height={136} showLabels />
         </POI>
       </>
     );
