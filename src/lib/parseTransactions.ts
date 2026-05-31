@@ -127,6 +127,8 @@ function rowToTransaction(row: Record<string, unknown>, index: number): Transact
     country: toStringOrNull(row[COL.country]),
     // Real outgoing spend = a purchase (code 3001) that is a debit.
     isSpend: lineType === "purchase" && direction === "debit",
+    employeeId: null,
+    department: null,
   };
 }
 

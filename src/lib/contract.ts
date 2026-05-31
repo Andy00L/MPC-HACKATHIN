@@ -21,6 +21,8 @@ export interface Transaction {
   state: string | null;
   country: string | null;
   isSpend: boolean; // true only for real outgoing purchases
+  employeeId: string | null;
+  department: string | null;
 }
 
 export type Category =
@@ -77,6 +79,7 @@ export interface ApprovalItem {
   txn: Transaction;
   categoryBudget: { category: Category; limit: number; spent: number; remaining: number };
   cardHistorySummary: string; // e.g. "12 prior charges at this merchant, avg $84"
+  employeeSummary: string;    // e.g. "EMP0196 · Administration — 12 prior charges, avg $84"
   recommendation: "approve" | "deny";
   reasoning: string;
   severity: Severity;

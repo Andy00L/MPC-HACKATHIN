@@ -314,7 +314,7 @@ function EncounterView({ ch, activeTarget, view }: { ch: number; activeTarget: s
           </div>
         </div>
       </POI>
-      <POI id="actions" active={activeTarget === "actions"} style={{ left: 670, top: 452, width: 448 }}>
+      <POI id="actions" active={activeTarget === "actions"} style={{ left: 670, top: 452, width: 448, pointerEvents: "auto" }}>
         <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
           <ActionBtn label="Approve" kbd="A" tone="pine" onClick={queue.approve} disabled={!reviewing || queue.done} style={{ flex: 1 }} />
           <ActionBtn label="Dismiss" kbd="D" tone="plain" onClick={queue.dismiss} disabled={!reviewing || queue.done} style={{ flex: 1 }} />
@@ -385,31 +385,42 @@ function ApprovalView({ view }: { view: LedgerView }) {
 
   return (
     <>
-      <div style={{ position: "absolute", left: 670, top: 162, width: 448 }}>
+      <div style={{ position: "absolute", left: 670, top: 162, width: 448, pointerEvents: "auto" }}>
         <div style={{ position: "relative", border: `1.5px solid ${WF.sepia}`, borderRadius: 6, background: WF.page, padding: 18 }}>
           <div style={{ position: "absolute", top: -11, right: 14 }}>
             <SevBadge level={severityToMood(item.severity)} />
           </div>
           <div style={{ fontFamily: WF.data, fontSize: 9.5, letterSpacing: 1, textTransform: "uppercase", color: WF.inkSoft, marginBottom: 5 }}>
-            Charge {index + 1} of {fmtInt(total)} · {item.txn.id} · {item.txn.category}
+            Charge {index + 1} of {fmtInt(total)} · {item.txn.category}
           </div>
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>
             <span style={{ fontFamily: WF.serif, fontWeight: 600, fontSize: 21, color: WF.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.txn.merchant}</span>
             <span style={{ fontFamily: WF.data, fontWeight: 600, fontSize: 22, color: WF.rust, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{money(item.txn.amount)}</span>
           </div>
-          <div style={{ display: "flex", gap: 14, marginTop: 12, fontFamily: WF.data, fontSize: 11.5, color: WF.ink }}>
+          {/* Employee + department badge */}
+          {(item.txn.employeeId || item.txn.department) && (
+            <div style={{ display: "flex", gap: 7, marginTop: 8, flexWrap: "wrap" }}>
+              {item.txn.employeeId && (
+                <Chip tone="plain">{item.txn.employeeId}</Chip>
+              )}
+              {item.txn.department && (
+                <Chip tone="plain">{item.txn.department}</Chip>
+              )}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 14, marginTop: 10, fontFamily: WF.data, fontSize: 11.5, color: WF.ink }}>
             <span>Limit <b>{money(budget.limit)}</b></span>
             <span>Spent <b>{money(budget.spent)}</b></span>
             <span>Left <b style={{ color: budget.remaining < item.txn.amount ? WF.rust : WF.pine }}>{money(budget.remaining)}</b></span>
           </div>
-          <div style={{ fontFamily: WF.data, fontSize: 11, color: WF.inkSoft, marginTop: 8 }}>{item.cardHistorySummary}</div>
-          <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 12 }}>
+          <div style={{ fontFamily: WF.data, fontSize: 10.5, color: WF.inkSoft, marginTop: 8, lineHeight: 1.4 }}>{item.employeeSummary}</div>
+          <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 10 }}>
             <Chip tone={recommendDeny ? "sev" : "plain"}>Keeper counsels: {recommendDeny ? "deny" : "approve"}</Chip>
           </div>
-          <div style={{ fontFamily: WF.body, fontSize: 13.5, color: WF.ink, lineHeight: 1.45, marginTop: 10 }}>{item.reasoning}</div>
+          <div style={{ fontFamily: WF.body, fontSize: 13, color: WF.ink, lineHeight: 1.45, marginTop: 10 }}>{item.reasoning}</div>
         </div>
       </div>
-      <div style={{ position: "absolute", left: 670, top: 478, width: 448 }}>
+      <div style={{ position: "absolute", left: 670, top: 500, width: 448, pointerEvents: "auto" }}>
         <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
           <ActionBtn label="Approve" kbd="A" tone="pine" onClick={approvals.approve} disabled={approvals.done} style={{ flex: 1 }} />
           <ActionBtn label="Deny" kbd="D" tone="rust" onClick={approvals.deny} disabled={approvals.done} style={{ flex: 1 }} />
@@ -418,7 +429,7 @@ function ApprovalView({ view }: { view: LedgerView }) {
           <div style={{ flex: 1, height: 5, background: WF.page2, borderRadius: 3, overflow: "hidden", border: `0.5px solid ${WF.sepiaSoft}` }}>
             <div style={{ width: `${total > 0 ? (index / total) * 100 : 0}%`, height: "100%", background: WF.pumpkin, transition: "width .3s" }} />
           </div>
-          <button type="button" onClick={approvals.undo} style={{ fontFamily: WF.data, fontSize: 10, color: WF.inkSoft, border: `1px solid ${WF.sepiaSoft}`, borderRadius: 3, padding: "2px 7px", background: "transparent", cursor: "pointer" }}>
+          <button type="button" onClick={approvals.undo} style={{ fontFamily: WF.data, fontSize: 10, color: WF.inkSoft, border: `1px solid ${WF.sepiaSoft}`, borderRadius: 3, padding: "2px 7px", background: "transparent", cursor: "pointer", pointerEvents: "auto" }}>
             ↩ undo · Z
           </button>
         </div>
@@ -474,7 +485,7 @@ function TripsView({ view }: { view: LedgerView }) {
 
   // The list of trips.
   return (
-    <div style={{ position: "absolute", left: 660, right: 36, top: 150 }}>
+    <div style={{ position: "absolute", left: 660, right: 36, top: 150, pointerEvents: "auto" }}>
       <RightHead>Trips on the road</RightHead>
       <div style={{ display: "flex", flexDirection: "column", gap: 7, maxHeight: 430, overflowY: "auto" }}>
         {reports.reports.map((report, reportIndex) => (
@@ -744,11 +755,11 @@ function PolicyRightPage({ view }: { view: LedgerView }) {
     );
   }
 
-  const shown = displayed.slice(0, 55);
+  const shown = displayed.slice(0, 200);
 
   return (
-    <div style={{ position: "absolute", left: 660, right: 36, top: 150, bottom: 18 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+    <div style={{ position: "absolute", left: 660, right: 36, top: 150, bottom: 18, display: "flex", flexDirection: "column", pointerEvents: "auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8, flexShrink: 0 }}>
         <div style={{ fontFamily: WF.data, fontSize: 9.5, letterSpacing: 1.4, textTransform: "uppercase", color: WF.pumpkin }}>
           Flagged under the Ordinance
         </div>
@@ -756,7 +767,8 @@ function PolicyRightPage({ view }: { view: LedgerView }) {
           {fmtInt(displayed.length)} {displayed.length === 1 ? "charge" : "charges"}
         </div>
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 4, overflowY: "auto", maxHeight: 560 }}>
+      {/* minHeight:0 is required so the flex child can shrink below content size and actually scroll */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, overflowY: "auto", flex: "1 1 0", minHeight: 0 }}>
         {shown.map((v) => {
           const isAlert = v.severity >= 2;
           const isWarn = v.severity >= 1;
@@ -784,9 +796,9 @@ function PolicyRightPage({ view }: { view: LedgerView }) {
             </div>
           );
         })}
-        {displayed.length > 55 && (
+        {displayed.length > 200 && (
           <div style={{ fontFamily: WF.data, fontSize: 10, color: WF.inkSoft, textAlign: "center", padding: "5px 0" }}>
-            …and {fmtInt(displayed.length - 55)} more
+            …and {fmtInt(displayed.length - 200)} more
           </div>
         )}
       </div>
